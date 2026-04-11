@@ -1,0 +1,35 @@
+[package]
+name = "myc-crypto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+rand = "0.8"
+base64 = { workspace = true }
+sha2 = { workspace = true }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+curve25519-dalek = { version = "4.1", features = ["rand_core", "digest"] }
+ed25519-dalek = { workspace = true }
+zeroize = { version = "1.7", features = ["derive"] }
+getrandom = "0.2"
+
+[features]
+default = []
+post-quantum = []
+
+[target.'cfg(not(feature = "post-quantum"))'.dependencies]
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.4"
+
+[[bench]]
+name = "encryption"
+harness = false
