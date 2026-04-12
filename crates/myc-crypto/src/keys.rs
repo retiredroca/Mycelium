@@ -247,9 +247,23 @@ impl KeyPair {
     }
 }
 
-#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct Ed25519KeyPair {
     signing_key: SigningKey,
+}
+
+impl Clone for Ed25519KeyPair {
+    fn clone(&self) -> Self {
+        let bytes = self.signing_key.to_bytes();
+        Self {
+            signing_key: SigningKey::from_bytes(&bytes),
+        }
+    }
+}
+
+impl std::fmt::Debug for Ed25519KeyPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ed25519KeyPair").finish()
+    }
 }
 
 impl Ed25519KeyPair {
@@ -274,11 +288,13 @@ impl Ed25519KeyPair {
 
 pub fn derive_shared_secret(their_public: &PublicKey, my_secret: &SecretKey) -> Vec<u8> {
     use curve25519_dalek::montgomery::MontgomeryPoint;
+    use curve25519_dalek::scalar::Scalar;
     
     let mut shared = [0u8; CURVE25519_KEY_SIZE];
     let point = MontgomeryPoint(*their_public.as_bytes());
+    let scalar = Scalar::from_bytes_mod_order(*my_secret.as_bytes());
     
-    let shared_point = point.multiply_scalar(my_secret.as_bytes());
+    let shared_point = point * scalar;
     
     shared.copy_from_slice(shared_point.as_bytes());
     shared[0] &= 248;

@@ -634,3 +634,506 @@ Phase 3 (Future):   Post-quantum only (when PQ performance improves)
 - **SLH-DSA**: Add SPHINCS+ for hash-based signatures (stateless)
 - **Threshold Cryptography**: Multi-party decryption keys for recovery
 - **ZKP Integration**: Zero-knowledge proofs for privacy-preserving actions
+
+---
+
+## Profile System Architecture
+
+### Overview
+
+The Mycelium Protocol implements a fully customizable user profile system with privacy-first design. Users own their profile data, which is encrypted and stored in the distributed network.
+
+```mermaid
+flowchart TB
+    subgraph Profile["Profile System"]
+        P[Profile]
+        L[Layout Manager]
+        T[Theme Engine]
+        W[Widget System]
+        V[Content Validator]
+    end
+    
+    P --> L
+    P --> T
+    L --> W
+    P --> V
+    
+    subgraph Layout["Layout Sections"]
+        H[Header]
+        M[Main Content]
+        S[Sidebar]
+        F[Footer]
+    end
+    
+    L --> H
+    L --> M
+    L --> S
+    L --> F
+```
+
+### Profile Structure
+
+```mermaid
+classDiagram
+    class Profile {
+        +PeerId peer_id
+        +Option~String~ username
+        +String display_name
+        +Option~String~ bio
+        +Option~String~ avatar_cid
+        +Option~String~ banner_cid
+        +Vec~SocialLink~ links
+        +Layout layout
+        +Theme theme
+        +PrivacySettings privacy
+        +created_at: i64
+        +updated_at: i64
+        +set_username() Result
+        +set_display_name() Result
+        +validate_content() Result
+    }
+    
+    class Layout {
+        +Vec~LayoutSection~ sections
+        +LayoutTemplate template
+        +apply_template()
+        +add_widget()
+        +remove_widget()
+    }
+    
+    class LayoutSection {
+        +SectionType section_type
+        +Vec~Widget~ widgets
+        +WidgetVisibility visibility
+    }
+    
+    class Theme {
+        +ThemePreset preset
+        +Option~String~ primary_color
+        +Option~String~ background_color
+        +generate_css() String
+    }
+    
+    class Widget {
+        +WidgetType widget_type
+        +WidgetConfig config
+        +Option~String~ custom_content
+    }
+    
+    Profile --> Layout
+    Profile --> Theme
+    Layout --> LayoutSection
+    LayoutSection --> Widget
+```
+
+### Layout Templates
+
+```mermaid
+flowchart LR
+    subgraph Templates["Available Templates"]
+        ID[Identity<br/>Bio + Avatar]
+        BLOG[Blog<br/>Posts + About]
+        PORTFOLIO[Portfolio<br/>Projects + Links]
+        SOCIAL[Social Hub<br/>Followers + Activity]
+    end
+    
+    subgraph Sections["Layout Sections"]
+        HDR[Header]
+        MAIN[Main]
+        SIDE[Sidebar]
+    end
+    
+    ID --> HDR
+    ID --> MAIN
+    BLOG --> HDR
+    BLOG --> MAIN
+    BLOG --> SIDE
+    PORTFOLIO --> HDR
+    PORTFOLIO --> MAIN
+    PORTFOLIO --> SIDE
+    SOCIAL --> HDR
+    SOCIAL --> MAIN
+```
+
+### Theme Presets
+
+| Preset | Primary | Background | Accent | Use Case |
+|--------|---------|------------|--------|----------|
+| **Midnight** | `#6366F1` | `#0F172A` | `#818CF8` | Dark theme |
+| **Ocean** | `#0EA5E9` | `#0C4A6E` | `#38BDF8` | Blue aesthetic |
+| **Forest** | `#22C55E` | `#14532D` | `#4ADE80` | Nature theme |
+| **Sunset** | `#F97316` | `#7C2D12` | `#FB923C` | Warm tones |
+| **Minimal** | `#6B7280` | `#F9FAFB` | `#9CA3AF` | Clean, simple |
+| **Hacker** | `#10B981` | `#111827` | `#34D399` | Terminal style |
+| **Aurora** | `#8B5CF6` | `#1E1B4B` | `#A78BFA` | Purple glow |
+
+### Content Validation
+
+All user content passes through a privacy-first validator:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                CONTENT VALIDATION PIPELINE                   │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  User Input ──► PII Detection ──► Spam Check ──► Approved   │
+│                      │                   │                   │
+│                      ▼                   ▼                   │
+│              Email patterns         Excessive caps           │
+│              Phone numbers         Repetitive chars          │
+│              Street addresses      Suspicious links          │
+│              SSN patterns          Auto-generated content     │
+│                                                              │
+│  Display Names: Allowed (non-PII only)                      │
+│  Bio: Allowed with validation                                │
+│  Links: Allowed with URL validation                          │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Guestbook System
+
+### Overview
+
+Inspired by the indie web movement, the guestbook allows visitors to leave public messages on user profiles. All entries require approval based on the owner's policy.
+
+```mermaid
+flowchart TB
+    subgraph Guestbook["Guestbook System"]
+        G[Guestbook]
+        E[Entry]
+        P[Pending Queue]
+        A[Approval Manager]
+        B[Blocked Authors]
+    end
+    
+    subgraph Entry["GuestbookEntry"]
+        id[Entry ID]
+        author[Author ID]
+        name[Display Name]
+        message[Message]
+        timestamp[Created At]
+        status[Status]
+    end
+    
+    G --> E
+    E --> P
+    G --> A
+    P --> A
+    A --> B
+```
+
+### Approval Policies
+
+```mermaid
+stateDiagram-v2
+    [*] --> Open: Anyone can sign
+    
+    state Open {
+        [*] --> Posted
+        Posted --> [*]: Immediate display
+    }
+    
+    state ApproveOnce {
+        [*] --> Pending
+        Pending --> Approved: First visit
+        Pending --> Blocked: Known spammer
+        Approved --> [*]: Future visits auto-approved
+        Blocked --> [*]: Entry rejected
+    }
+    
+    state Approval {
+        [*] --> Pending
+        Pending --> Approved: Owner approves
+        Pending --> Rejected: Owner rejects
+        Approved --> [*]: Displayed
+        Rejected --> [*]: Hidden
+    }
+    
+    state Closed {
+        [*] --> [*]: No entries allowed
+    }
+```
+
+### Guestbook Entry Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant V as Visitor
+    participant G as Guestbook
+    participant A as Approval Manager
+    participant O as Owner
+    
+    V->>G: Sign guestbook(message, name)
+    G->>A: Check policy
+    
+    alt Open Policy
+        A->>G: Auto-approve
+        G->>G: Display entry
+    end
+    
+    alt Approval Required
+        A->>G: Add to pending queue
+        O->>A: View pending entries
+        O->>A: Approve(entry_id)
+        A->>G: Move to approved
+        G->>G: Display entry
+    end
+    
+    alt Blocked Author
+        A->>A: Check blocked list
+        A->>G: Reject silently
+        Note over G: Entry not visible
+    end
+```
+
+---
+
+## Social Graph
+
+### Overview
+
+The social graph tracks user relationships including follows, followers, and blocks. All operations respect user privacy settings.
+
+```mermaid
+flowchart TB
+    subgraph SocialGraph["Social Graph"]
+        SG[Social Graph]
+        F[Follows]
+        FR[Followers]
+        B[Block List]
+        P[Privacy Settings]
+    end
+    
+    subgraph PrivacyControls["Privacy Controls"]
+        PV[Profile Visibility]
+        GP[Guestbook Policy]
+        FA[Follow Approval]
+        DM[DM Policy]
+    end
+    
+    SG --> F
+    SG --> FR
+    SG --> B
+    SG --> P
+    P --> PV
+    P --> GP
+    P --> FA
+    P --> DM
+```
+
+### Relationship States
+
+```mermaid
+stateDiagram-v2
+    [*] --> None: No relationship
+    
+    None --> Following: User A follows B
+    Following --> [*]: User A unfollows B
+    
+    None --> Follower: User B follows A
+    Follower --> [*]: User B unfollows A
+    
+    None --> Mutual: A→B and B→A
+    Mutual --> Following: B unfollows A
+    Mutual --> Follower: A unfollows B
+    
+    None --> Blocked: A blocks B
+    Blocked --> None: A unblocks B
+    
+    Following --> Blocked: A blocks B
+    Mutual --> Blocked: A blocks B
+```
+
+### Privacy Policies
+
+```mermaid
+flowchart LR
+    subgraph ProfileVisibility["Profile Visibility"]
+        PUB[Public]
+        HID[Hidden]
+        UNC[Unlisted]
+    end
+    
+    subgraph GuestbookPolicy["Guestbook Policy"]
+        O[Open]
+        AO[ApproveOnce]
+        AR[Approval Required]
+        CL[Closed]
+    end
+    
+    subgraph DMPolicy["DM Policy"]
+        AL[Allow All]
+        FO[Followers Only]
+        NO[No One]
+    end
+    
+    subgraph FollowApproval["Follow Approval"]
+        Y[Yes - Require Approval]
+        N[No - Auto-approve]
+    end
+```
+
+---
+
+## DHT Identity Registry
+
+### Overview
+
+Decentralized username registration and lookup using the Kademlia DHT. Usernames are first-come, first-served and stored as content-addressed records.
+
+```mermaid
+flowchart TB
+    subgraph Identity["Identity Registry"]
+        I[Identity Manager]
+        R[Registry]
+        L[Lookup Service]
+        D[Discovery]
+    end
+    
+    subgraph Records["Registry Records"]
+        U[Username Record]
+        P[Profile CID]
+        K[Public Key]
+        T[Timestamp]
+        S[Signature]
+    end
+    
+    I --> R
+    I --> L
+    I --> D
+    R --> U
+    U --> P
+    U --> K
+    U --> T
+    U --> S
+```
+
+### Username Registration Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant I as Identity Manager
+    participant DHT as Kademlia DHT
+    participant BC as Blockchain
+    
+    Note over U: Generate keypair
+    
+    U->>I: Register username("alice")
+    I->>I: Check username validity
+    I->>I: Generate UsernameRecord
+    I->>I: Sign record with private key
+    
+    I->>DHT: PUT(username_record)
+    DHT->>DHT: Store at username hash
+    
+    Note over DHT: Content-addressed storage
+    Note over DHT: CID = hash(username + key + timestamp)
+    
+    DHT->>I: Storage confirmed
+    I->>U: Registration successful
+    I->>BC: Optional on-chain anchoring
+```
+
+### Identity Lookup
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant I as Identity Service
+    participant DHT as Kademlia DHT
+    
+    C->>I: Lookup("alice")
+    I->>DHT: GET(username_hash)
+    DHT->>DHT: Find closest peers
+    
+    alt Username Found
+        DHT->>I: UsernameRecord
+        I->>I: Verify signature
+        I->>C: Profile CID + Public Key
+    else Username Not Found
+        DHT->>I: Not found
+        I->>C: Error: Username not registered
+    end
+```
+
+### Username Constraints
+
+| Rule | Constraint |
+|------|------------|
+| **Length** | 3-32 characters |
+| **Characters** | a-z, 0-9, underscore, hyphen |
+| **Case** | Case-insensitive (stored lowercase) |
+| **Reserved** | system usernames (admin, root, etc.) |
+| **Uniqueness** | First-come, first-served via DHT |
+
+---
+
+## Implementation Modules Summary
+
+| Module | Path | Description |
+|--------|------|-------------|
+| **myc-profile** | `crates/myc-profile/` | User profiles, layouts, themes |
+| ├─ profile.rs | Profile struct and validation |
+| ├─ layout.rs | Layout sections and widgets |
+| ├─ theme.rs | Theme presets and CSS generation |
+| ├─ widget.rs | Widget types and configs |
+| └─ validation.rs | PII detection, content filtering |
+| **myc-guestbook** | `crates/myc-guestbook/` | Guestbook entries and approval |
+| ├─ entry.rs | GuestbookEntry struct |
+| ├─ pending.rs | Pending queue management |
+| └─ approval.rs | Approval policies |
+| **myc-social** | `crates/myc-social/` | Social graph and privacy |
+| ├─ graph.rs | Follow/follower relationships |
+| └─ privacy.rs | Privacy settings and policies |
+| **myc-identity** | `crates/myc-identity/` | DHT username registry |
+| ├─ registry.rs | Username registration |
+| ├─ lookup.rs | Username resolution |
+| └─ discovery.rs | Service discovery |
+
+---
+
+## Complete Crate Architecture
+
+```
+mycelium/
+├── Cargo.toml                    # Workspace root
+│
+├── bin/
+│   └── mycelium-node/           # CLI application
+│       └── src/
+│           ├── main.rs          # Command handlers
+│           └── wallet.rs        # Wallet utilities
+│
+└── crates/
+    ├── myc-crypto/              # Cryptographic operations
+    ├── myc-p2p/                 # P2P networking (libp2p)
+    ├── myc-storage/             # Distributed storage
+    ├── myc-post/                # Post creation and lifecycle
+    ├── myc-protocol/            # Protocol specifications
+    ├── myc-token/               # Tokenomics and rewards
+    ├── myc-profile/             # User profiles & customization
+    ├── myc-guestbook/           # Guestbook system
+    ├── myc-social/              # Social graph & relationships
+    └── myc-identity/            # DHT username registry
+```
+
+---
+
+## Feature Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| P2P Networking | ✅ Implemented | Kademlia + GossipSub v2 |
+| Post Lifecycle | ✅ Implemented | TTL, Hype, Permanence |
+| Tokenomics | ✅ Implemented | Emission, staking, rewards |
+| Quantum Encryption | ✅ Implemented | Hybrid X25519+Kyber |
+| User Profiles | ✅ Implemented | Layout, themes, widgets |
+| Guestbook | ✅ Implemented | Approval-based entries |
+| Social Graph | ✅ Implemented | Follow/follower/block |
+| Identity Registry | ✅ Implemented | DHT username lookup |
+| Storage Integration | 🔄 In Progress | OrbitDB/Helia connection |
+| Solana SVM L2 | 🔄 In Progress | Token contracts |

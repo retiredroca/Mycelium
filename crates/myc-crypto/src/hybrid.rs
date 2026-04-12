@@ -1,5 +1,5 @@
 use crate::{
-    crypto::{CryptoError, CURVE25519_KEY_SIZE, AES256_KEY_SIZE},
+    CryptoError, CURVE25519_KEY_SIZE, AES256_KEY_SIZE,
     encryption::{Decryptor, Encryptor, EncryptedData},
     keys::{derive_shared_secret, KeyPair, PublicKey},
 };

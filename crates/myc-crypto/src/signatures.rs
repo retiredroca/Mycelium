@@ -43,8 +43,9 @@ impl Signature {
             .map_err(|_| CryptoError::InvalidSignature)?;
 
         let signature = EdSignature::from_bytes(&signature_array);
-        let verifying_key = VerifyingKey::from_bytes(&self.public_key.try_into()
-            .map_err(|_| CryptoError::InvalidSignature)?)
+        let public_key_bytes: [u8; 32] = self.public_key.clone().try_into()
+            .map_err(|_| CryptoError::InvalidSignature)?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
             .map_err(|_| CryptoError::InvalidSignature)?;
 
         Ok(verifying_key.verify(message, &signature).is_ok())
@@ -76,8 +77,9 @@ impl Signature {
             .map_err(|_| CryptoError::InvalidSignature)?;
 
         let signature = EdSignature::from_bytes(&signature_array);
-        let verifying_key = VerifyingKey::from_bytes(&self.public_key.try_into()
-            .map_err(|_| CryptoError::InvalidSignature)?)
+        let public_key_bytes: [u8; 32] = self.public_key.clone().try_into()
+            .map_err(|_| CryptoError::InvalidSignature)?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
             .map_err(|_| CryptoError::InvalidSignature)?;
 
         Ok(verifying_key.verify(message, &signature).is_ok())

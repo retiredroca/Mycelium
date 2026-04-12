@@ -6,9 +6,9 @@ pub mod quantum_resistant;
 
 pub use keys::{KeyPair, PublicKey, SecretKey, KeyMaterial};
 pub use encryption::{Encryptor, Decryptor, EncryptedData, EncryptionScheme};
-pub use signatures::{Signer, Verifier, Signature, SignedData};
-pub use hybrid::{HybridKeyPair, HybridEncryption, HybridSignature};
-pub use quantum_resistant::{QuantumResistantKey, PQCrypto};
+pub use signatures::{Signature, SignedData, SignerEngine, SignatureAlgorithm};
+pub use hybrid::{HybridKeyPair, HybridEncryption};
+pub use quantum_resistant::{QuantumResistantKey, PQCrypto, PQKeyType};
 
 use thiserror::Error;
 

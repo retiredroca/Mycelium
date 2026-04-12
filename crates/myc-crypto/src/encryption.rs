@@ -43,8 +43,7 @@ impl EncryptedData {
         let ciphertext_len = combined.len() - AES256_NONCE_SIZE - AES256_TAG_SIZE;
         let ciphertext = combined[AES256_NONCE_SIZE..AES256_NONCE_SIZE + ciphertext_len].to_vec();
 
-        let mut tag = [0u8; AES256_TAG_SIZE];
-        tag.copy_from_slice(&combined[AES256_NONCE_SIZE + ciphertext_len..]);
+        let tag = combined[AES256_NONCE_SIZE + ciphertext_len..].to_vec();
 
         Ok(Self {
             nonce: nonce.to_vec(),
@@ -68,9 +67,15 @@ impl Default for EncryptionAlgorithm {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Encryptor {
     cipher: Aes256Gcm,
+}
+
+impl std::fmt::Debug for Encryptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Encryptor").finish()
+    }
 }
 
 impl Encryptor {
@@ -110,9 +115,15 @@ impl Encryptor {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Decryptor {
     cipher: Aes256Gcm,
+}
+
+impl std::fmt::Debug for Decryptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Decryptor").finish()
+    }
 }
 
 impl Decryptor {

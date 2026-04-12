@@ -99,13 +99,13 @@ impl PQCrypto {
 
     fn hybrid_keygen() -> Result<QuantumResistantKey, CryptoError> {
         use rand::RngCore;
-        use super::super::keys::KeyPair;
+        use crate::keys::KeyPair;
         
         let classical = KeyPair::generate()?;
         let (classical_pub, classical_sec) = classical.to_bytes();
         
-        let mut pq_public = vec![0u8; 1184];
-        let mut pq_secret = vec![0u8; 2400];
+        let mut pq_public: Vec<u8> = vec![0u8; 1184];
+        let mut pq_secret: Vec<u8> = vec![0u8; 2400];
         rand::rngs::OsRng.fill_bytes(&mut pq_public);
         rand::rngs::OsRng.fill_bytes(&mut pq_secret);
         
@@ -113,11 +113,11 @@ impl PQCrypto {
             pq_public[i] ^= 0xAB;
         }
         
-        let mut hybrid_public = Vec::with_capacity(classical_pub.len() + pq_public.len());
+        let mut hybrid_public: Vec<u8> = Vec::with_capacity(classical_pub.len() + pq_public.len());
         hybrid_public.extend_from_slice(&classical_pub);
         hybrid_public.extend_from_slice(&pq_public);
         
-        let mut hybrid_secret = Vec::with_capacity(classical_sec.len() + pq_secret.len());
+        let mut hybrid_secret: Vec<u8> = Vec::with_capacity(classical_sec.len() + pq_secret.len());
         hybrid_secret.extend_from_slice(&classical_sec);
         hybrid_secret.extend_from_slice(&pq_secret);
         
@@ -167,7 +167,6 @@ impl PQCrypto {
         }
         
         use rand::RngCore;
-        use super::super::keys::KeyPair;
         
         let classical_pub = &pk.public_bytes[..CURVE25519_KEY_SIZE];
         let pq_pub = &pk.public_bytes[CURVE25519_KEY_SIZE..];
@@ -183,11 +182,11 @@ impl PQCrypto {
             pq_ct[i] ^= 0x69;
         }
         
-        let mut shared_secret = Vec::with_capacity(64);
+        let mut shared_secret: Vec<u8> = Vec::with_capacity(64);
         shared_secret.extend_from_slice(&classical_ss);
         shared_secret.extend_from_slice(&pq_pub[..32]);
         
-        let mut combined_ct = Vec::with_capacity(32 + 1088);
+        let mut combined_ct: Vec<u8> = Vec::with_capacity(32 + 1088);
         combined_ct.extend_from_slice(&classical_ct);
         combined_ct.extend_from_slice(&pq_ct);
         
@@ -195,7 +194,7 @@ impl PQCrypto {
     }
 
     pub fn security_bits(&self) -> u32 {
-        match self.SECURITY_LEVEL {
+        match Self::SECURITY_LEVEL {
             SecurityLevel::Level1 => 128,
             SecurityLevel::Level3 => 192,
             SecurityLevel::Level5 => 256,

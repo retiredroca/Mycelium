@@ -8,11 +8,16 @@ name = "mycelium"
 path = "src/main.rs"
 
 [dependencies]
-myc-p2p = { path = "../crates/myc-p2p" }
-myc-storage = { path = "../crates/myc-storage" }
-myc-token = { path = "../crates/myc-token" }
-myc-post = { path = "../crates/myc-post" }
-myc-protocol = { path = "../crates/myc-protocol" }
+myc-p2p = { path = "../../crates/myc-p2p" }
+myc-storage = { path = "../../crates/myc-storage" }
+myc-token = { path = "../../crates/myc-token" }
+myc-post = { path = "../../crates/myc-post" }
+myc-protocol = { path = "../../crates/myc-protocol" }
+myc-profile = { path = "../../crates/myc-profile" }
+myc-guestbook = { path = "../../crates/myc-guestbook" }
+myc-social = { path = "../../crates/myc-social" }
+myc-identity = { path = "../../crates/myc-identity" }
+myc-crypto = { path = "../../crates/myc-crypto" }
 
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { workspace = true }
@@ -23,6 +28,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 ed25519-dalek = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.10"
