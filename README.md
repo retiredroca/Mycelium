@@ -23,6 +23,7 @@ Every module is a single `static inline` header. The entire project builds in se
 - **Video Hosting**: Encrypted chunked video with bandwidth-weighted peer selection and streaming slot reservations
 - **Embedded Web UI**: YouTube-style landing page served via built-in HTTP listener (`--http-port`)
 - **Tor / Onion Routing**: Run nodes over Tor hidden services with auto-derived `.onion` addresses via Ed25519 key pairs
+- **Proof-of-Work Mining**: Mine MYTUBE tokens via SHA-256 hash brute-force (placeholder until Social Mining via P2P transport arrives)
 - **Social Mining**: Earn tokens by relaying data, hosting content, and creating engagement
 - **Quantum-Resistant**: Hybrid cryptography (X25519 + Kyber-768 + AES-256-GCM)
 - **Proof of Engagement**: Content visibility extends based on network interaction
@@ -93,8 +94,14 @@ cmake --build build --config Release
 # Create a post
 ./build/Release/mycelium post --content "Hello, MyTube Network!"
 
+# Create a wallet (balance starts at 0)
+./build/Release/mycelium wallet create
+
 # Check wallet balance
 ./build/Release/mycelium wallet balance
+
+# Mine tokens via proof-of-work (SHA-256, difficulty 16 bits)
+./build/Release/mycelium mine
 
 # Upload a video manifest (simulated)
 ./build/Release/mycelium video upload --video-id "my-video" --duration 120000 --width 1920 --height 1080 --codec 0 --bitrate 8000000 --chunks 4
@@ -148,7 +155,25 @@ Videos and posts on MyTube have a Time-To-Live (TTL) that is extended through vi
 
 ## Tokenomics
 
+### Token Supply & Mining
+
+MYTUBE tokens enter circulation through **proof-of-work mining** — there is no pre-mine, no ICO, and no instant grant. Every token is mined into existence.
+
+> **Note:** This PoW is a placeholder genesis mechanism for the simulation. In the real MyTube protocol, the primary distribution will come from **Social Mining** — earning tokens by relaying data, hosting storage, creating content, and driving engagement through the reward pools (see Reward Distribution below). The PoW miner is pure CPU hash brute-force with no relation to network services; it exists only to gate token minting until the P2P transport layer is implemented.
+
+| Parameter | Value |
+|-----------|-------|
+| Total Supply | 1,000,000,000 MYTUBE (hard cap) |
+| Block Reward (epoch 0) | 50 MYTUBE |
+| Halving Interval | Every 210,000 epochs |
+| Initial Difficulty | 16 leading zero bits |
+| Difficulty Adjustment | +1 bit every 10,000 epochs (cap: 28 bits) |
+| Mining Algorithm | SHA-256(pubkey ‖ nonce ‖ epoch) |
+| Disinflation | Annual inflation rate drops 15% per epoch (floor 1.5%) |
+
 ### Reward Distribution (Annual Emission: 8% → 1.5%)
+
+The mined supply is distributed through Social Mining pools using the reward pool system:
 
 | Category | Allocation | Description |
 |----------|------------|-------------|
@@ -295,6 +320,7 @@ cmake -B build && cmake --build build --config Release
 ./build/Release/mycelium status
 ./build/Release/mycelium wallet create
 ./build/Release/mycelium wallet balance
+./build/Release/mycelium mine
 ./build/Release/mycelium profile create --display-name "Alice" --username alice
 ```
 
@@ -302,7 +328,7 @@ cmake -B build && cmake --build build --config Release
 
 | Phase | Timeline | Goals |
 |-------|----------|-------|
-| **Phase 1** | Current | C++ port, core crypto, CLI, peer table, profile system, video hosting, embedded web UI |
+| **Phase 1** | Current | C++ port, core crypto, CLI, peer table, profile system, video hosting, embedded web UI, PoW mining |
 | **Phase 2** | Next | Real TCP/UDP transport, Kademlia DHT, gossip protocol |
 | **Phase 3** | Future | Real liboqs integration (ML-KEM, SLH-DSA), encrypted storage |
 | **Phase 4** | Future | Token integration, staking, governance |

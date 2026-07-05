@@ -155,13 +155,19 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    subgraph Emission["Token Emission (8% → 1.5%)"]
-        Y1[Year 1: 8%]
-        Y3[Year 3: 5%]
-        Y6[Year 6: 2%]
+    subgraph Mining["Proof-of-Work Mining"]
+        POW[SHA-256(pubkey ‖ nonce ‖ epoch)]
+        DIFF[Difficulty: 16–28 bits]
+        HALVE[Halving: 50 → 25 → 12.5 ...]
+        MINT[Minted to Wallet]
     end
     
-    subgraph Rewards["Reward Distribution"]
+    subgraph Supply["Token Supply (1B hard cap)"]
+        MS[Minted Supply<br/>tracks tokens mined]
+        RS[Remaining Supply<br/>available to mine]
+    end
+    
+    subgraph SocialMining["Social Mining Pools"]
         R[Relay: 35%]
         H[Hosting: 40%]
         C[Creation: 15%]
@@ -180,13 +186,86 @@ flowchart LR
         UP[Unbonding: 7 days]
     end
     
-    Emission --> Rewards
-    Rewards --> Stake
-    Rewards --> F
+    POW -->|valid nonce| MINT
+    MINT --> MS
+    MS --> RS
+    RS -.->|disinflation| SocialMining
+    SocialMining --> Stake
+    SocialMining --> F
     
     F --> Burn
     I --> Burn
     P --> Burn
+```
+
+## Proof-of-Work Mining
+
+### Overview
+
+MYTUBE tokens enter circulation exclusively through proof-of-work mining. There is no pre-mine, no ICO, and no instant grant — wallets start at 0. The mining system uses a SHA-256 hash puzzle with adjustable difficulty, block reward halving, and disinflation.
+
+> **Note:** This PoW is a **placeholder genesis mechanism** for the simulation. The "work" is pure CPU hash brute-force (SHA-256(wallet_pubkey ‖ nonce ‖ epoch)) with no relation to network services — it exists only to gate token minting until the P2P transport layer lands. In the real MyTube protocol, the primary token distribution will come from the **Social Mining** reward pools (Relay 35% / Hosting 40% / Creation 15% / Engagement 10%), where tokens are earned through actual network participation.
+
+### Mining Algorithm
+
+```
+Input:  pubkey (32 bytes) ‖ nonce (8 bytes LE) ‖ epoch (8 bytes LE)
+Hash:   SHA-256(input) → 32 bytes
+Target: leading zero bits ≥ difficulty_bits(epoch)
+```
+
+The miner iterates nonces from 0 to `kMiningMaxNoncePerAttempt` (2,000,000) searching for a hash that meets the current difficulty target. Upon finding a valid nonce, the token is minted against the hard cap.
+
+### Difficulty & Halving
+
+```
+difficulty_bits(epoch) = min(16 + epoch / 10000, 28)
+
+block_reward(epoch) = 50 >> (epoch / 210000)  // halving
+                    = 1 (floor)
+```
+
+| Epoch Range | Difficulty (bits) | Block Reward |
+|-------------|-------------------|-------------|
+| 0 – 9,999   | 16                | 50 MYTUBE   |
+| 10,000 – 19,999 | 17            | 50 MYTUBE   |
+| ...         | +1 every 10K      | 50 until 210K |
+| 210,000+    | capped at 28      | 25 (first halving) |
+
+### Disinflation
+
+Each mined block increments `current_epoch` and reduces the annual inflation rate by 15%:
+```
+annual_inflation_bps = annual_inflation_bps * 85 / 100  // floor at 1.5%
+```
+
+This ensures token issuance trends toward the hard cap asymptotically, with no fixed schedule — the rate adapts to actual block production.
+
+### Integration Points
+
+| Component | File | Role |
+|-----------|------|------|
+| Mining constants | `src/token/myc_token.hpp` | `kMiningBaseReward`, `kMiningHalvingEpochs`, `kMiningDiffStart`, `kMiningDiffInterval`, `kMiningDiffCap` |
+| Block reward | `src/token/myc_token.hpp` | `mining_block_reward(epoch)` — halving logic |
+| Difficulty | `src/token/myc_token.hpp` | `mining_difficulty_bits(epoch)` — adjustment logic |
+| Nonce search | `src/token/myc_token.hpp` | `mining_search(pubkey, epoch, max_nonce)` — SHA-256 hash loop |
+| Mint to wallet | `src/token/myc_token.hpp` | `mint_to_wallet(Tokenomics&, Wallet&, amount)` — supply check + credit |
+| Supply tracking | `src/token/myc_token.hpp` | `Tokenomics::minted_supply` — tokens mined into existence |
+| CLI command | `src/main.cpp` | `mine` — auto-creates wallet, runs search, mints on success |
+
+### CLI Usage
+
+```bash
+# Create wallet (balance starts at 0)
+./build/Release/mycelium wallet create
+
+# Mine a block (auto-creates wallet if none exists)
+./build/Release/mycelium mine
+# ⛏ Block found! Nonce: 107782, Reward: 50 MYTUBE, Balance: 50 MYTUBE
+
+# Check balance and network state
+./build/Release/mycelium wallet balance
+./build/Release/mycelium status
 ```
 
 ## Peer Table Management
@@ -339,6 +418,7 @@ flowchart TB
 | **Database** | EncryptedStorageEntry + MerkleProof | Distributed content-addressed storage |
 | **Storage Bridge** | EncryptedDataHandoff + StorageAgreement | Peer-to-peer storage contracts |
 | **Token Layer** | MYCELIUM token (RewardPool) | Social mining rewards |
+| **PoW Mining** | SHA-256 hash puzzle | Genesis distribution via proof-of-work |
 | **Identity** | Ed25519 + UsernameRegistry | Key-based identity management |
 | **Consensus** | Proof of Stake | Network security |
 | **Video Hosting** | ChunkedFile + StreamingSlot | P2P video distribution |
@@ -1134,6 +1214,7 @@ mycelium/
 | P2P Networking | ✅ Implemented | Peer table, gossip protocol types |
 | Post Lifecycle | ✅ Implemented | TTL, Hype, Permanence |
 | Tokenomics | ✅ Implemented | Emission, staking, rewards |
+| PoW Mining | ✅ Implemented | SHA-256 mining, difficulty adjustment, halving, disinflation |
 | Quantum Encryption | ✅ Implemented | Hybrid X25519+Kyber |
 | User Profiles | ✅ Implemented | Layout, themes, widgets |
 | Guestbook | ✅ Implemented | Approval-based entries |

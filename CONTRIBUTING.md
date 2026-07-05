@@ -37,6 +37,7 @@ There is no separate test suite. The project is validated by building and runnin
 ./build/Release/mycelium status
 ./build/Release/mycelium wallet create
 ./build/Release/mycelium wallet balance
+./build/Release/mycelium mine
 ./build/Release/mycelium profile create --display-name "Test" --username test
 ./build/Release/mycelium post --content "Hello"
 ./build/Release/mycelium video upload --video-id "v1" --duration 120000 --width 1920 --height 1080
