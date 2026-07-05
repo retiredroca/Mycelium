@@ -11,54 +11,50 @@ environment for everyone. We do not tolerate harassment or discrimination of any
 
 ### Development Setup
 
-1. **Install Rust**
+1. **Clone the repository**
    ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   rustup update
+   git clone https://github.com/retiredroca/Mycelium.git
+   cd mycelium
    ```
 
-2. **Install System Dependencies**
-   ```bash
-   # Debian/Ubuntu
-   sudo apt-get install build-essential libssl-dev pkg-config
-   
-   # macOS
-   brew install openssl pkg-config
-   ```
+2. **Prerequisites**
+   - C++17 compiler (MSVC 2022+, GCC 9+, Clang 10+)
+   - CMake 3.20+
 
-3. **Clone and Build**
+3. **Build**
    ```bash
-    git clone https://github.com/retiredroca/Mycelium.git
-    cd mycelium
-   cargo build --release
+   cmake -B build
+   cmake --build build --config Release
    ```
 
 ### Running Tests
 
+There is no separate test suite. The project is validated by building and running the CLI commands:
+
 ```bash
-# Run all tests
-cargo test
+# Verify all commands execute without error
+./build/Release/mycelium help
+./build/Release/mycelium status
+./build/Release/mycelium wallet create
+./build/Release/mycelium wallet balance
+./build/Release/mycelium profile create --display-name "Test" --username test
+./build/Release/mycelium post --content "Hello"
+./build/Release/mycelium video upload --video-id "v1" --duration 120000 --width 1920 --height 1080
+./build/Release/mycelium video manifest
 
-# Run with verbose output
-cargo test -- --nocapture
-
-# Run specific tests
-cargo test -p myc-crypto
-cargo test -p myc-p2p
-cargo test -p myc-post
+# Start with web UI (visit http://localhost:8080)
+./build/Release/mycelium start --http-port 8080
 ```
 
 ### Code Style
 
-We use `rustfmt` for code formatting and `clippy` for linting:
-
-```bash
-# Format code
-cargo fmt
-
-# Run linter
-cargo clippy --all-targets -- -D warnings
-```
+- **No exceptions**, **no virtual dispatch**, **no async**
+- All modules are single `static inline` headers in `src/`
+- Fixed-size buffers (`std::array`) preferred over heap (`std::vector`)
+- Integer error codes with `strerror`-style lookup tables
+- Snake case for functions and variables
+- 4-space indentation
+- No `using namespace std;`
 
 ## Branching Strategy
 
@@ -83,44 +79,42 @@ security: harden key exchange protocol
 ## Pull Request Process
 
 1. **Fork** the repository and create your branch from `develop`
-2. **Write tests** for any new functionality
-3. **Ensure tests pass**: `cargo test`
-4. **Run linter**: `cargo clippy --fix`
-5. **Update documentation** if needed
-6. **Submit PR** with a clear description of changes
+2. **Build successfully**: `cmake --build build --config Release`
+3. **Run all CLI commands** to verify nothing is broken
+4. **Update documentation** if needed
+5. **Submit PR** with a clear description of changes
 
 ## Areas for Contribution
 
 ### High Priority
 
-- [ ] Complete libp2p integration with GossipSub
-- [ ] Implement Solana SVM L2 token contracts
-- [ ] Add proper Kyber/Dilithium libraries (currently simulated)
-- [ ] Build distributed storage with OrbitDB/Helia
+- [ ] Real TCP/UDP transport layer (currently types only, no socket code)
+- [ ] Kademlia DHT integration with peer table
+- [ ] Gossip protocol message propagation
+- [ ] Real liboqs integration (ML-KEM, SLH-DSA) replacing PQ stubs
 
 ### Medium Priority
 
-- [ ] Mobile client application
-- [ ] WebAssembly browser integration
-- [ ] DAO governance module
-- [ ] Cross-chain bridge implementations
+- [ ] Web UI improvements (video playback, dynamic content)
+- [ ] Multiple simultaneous connections in HTTP server
+- [ ] Wallet persistence across restarts
+- [ ] Cross-platform testing (Linux, macOS)
 
 ### Lower Priority
 
 - [ ] Performance optimization
-- [ ] Additional test coverage
+- [ ] Additional compile-time verification
 - [ ] Documentation improvements
 - [ ] Internationalization
 
 ## Security Disclosures
 
 If you discover a security vulnerability, please DO NOT open a public issue.
-Instead, contact us privately at security@example.com.
+Instead, contact us privately at security@mytube.example.com.
 
 ## Questions?
 
 - Open an issue for general questions
-- Join our community Discord (link in README)
 - Check the [documentation](./docs/architecture.md)
 
 ---

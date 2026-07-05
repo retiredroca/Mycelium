@@ -16,6 +16,7 @@
 #include "identity/myc_identity.hpp"
 #include "p2p/myc_p2p.hpp"
 #include "media/myc_video.hpp"
+#include "web/myc_web.hpp"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -123,10 +124,11 @@ static AppState g_state;
 // ============================================================
 // Command handlers
 // ============================================================
-static inline void handle_start(const char* listen, const char* bootstrap,
-                                 bool enable_tor, uint16_t tor_socks, uint16_t tor_ctrl) {
+static inline void handle_start(const char* listen_addr, const char* bootstrap,
+                                 bool enable_tor, uint16_t tor_socks, uint16_t tor_ctrl,
+                                 uint16_t http_port) {
     P2pConfig cfg;
-    cfg.listen_addresses.push_back(listen ? listen : "/ip4/0.0.0.0/tcp/0");
+    cfg.listen_addresses.push_back(listen_addr ? listen_addr : "/ip4/0.0.0.0/tcp/0");
     if (bootstrap) cfg.bootstrap_nodes.push_back(bootstrap);
     cfg.capabilities.push_back({kCapFull});
     cfg.enable_tor = enable_tor;
@@ -138,7 +140,7 @@ static inline void handle_start(const char* listen, const char* bootstrap,
 
     print_yt_header("\xF0\x9F\x94\x8C", "MYTUBE NODE STARTED");
     print_yt_line("Peer ID", g_state.node->local_peer_id().c_str());
-    print_yt_line("Listening", listen ? listen : "default");
+    print_yt_line("Listening", listen_addr ? listen_addr : "default");
     char peers[32];
     snprintf(peers, sizeof(peers), "%zu", g_state.node->peer_count());
     print_yt_line("Peers", peers);
@@ -153,7 +155,72 @@ static inline void handle_start(const char* listen, const char* bootstrap,
     } else {
         print_yt_line("Tor", "Disabled");
     }
+    if (http_port > 0) {
+        char port_str[16];
+        snprintf(port_str, sizeof(port_str), "%u", http_port);
+        print_yt_line("Web UI", port_str);
+        if (!g_state.node->local_info.onion_address.empty()) {
+            std::string onion_url = "http://" + g_state.node->local_info.onion_address + ".onion";
+            print_yt_line("Tor URL", onion_url.c_str());
+        }
+    }
     print_yt_sep();
+
+    if (http_port > 0) {
+        printf("\n  Starting HTTP server on port %u...\n", http_port);
+
+#ifdef _WIN32
+        SOCKET server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd == INVALID_SOCKET) {
+            printf("  Error: socket() failed\n");
+            return;
+        }
+        struct sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(http_port);
+        addr.sin_addr.s_addr = INADDR_ANY;
+        if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+            printf("  Error: bind() failed (port %u in use?)\n", http_port);
+            closesocket(server_fd);
+            return;
+        }
+        listen(server_fd, SOMAXCONN);
+        printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", http_port);
+        printf("  Press Ctrl+C to stop.\n\n");
+
+        while (g_state.node_running) {
+            SOCKET client = accept(server_fd, nullptr, nullptr);
+            if (client == INVALID_SOCKET) break;
+            serve_http_page((uintptr_t)client);
+        }
+        closesocket(server_fd);
+#else
+        int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd < 0) {
+            printf("  Error: socket() failed\n");
+            return;
+        }
+        struct sockaddr_in addr;
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(http_port);
+        addr.sin_addr.s_addr = INADDR_ANY;
+        if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            printf("  Error: bind() failed (port %u in use?)\n", http_port);
+            close(server_fd);
+            return;
+        }
+        listen(server_fd, SOMAXCONN);
+        printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", http_port);
+        printf("  Press Ctrl+C to stop.\n\n");
+
+        while (g_state.node_running) {
+            int client = accept(server_fd, nullptr, nullptr);
+            if (client < 0) break;
+            serve_http_page((uintptr_t)client);
+        }
+        close(server_fd);
+#endif
+    }
 }
 
 static inline void handle_profile_create(const char* display_name, const char* username) {
@@ -536,7 +603,7 @@ static inline void print_usage(const char* prog) {
     printf("  A YouTube-like P2P video network\n\n");
     printf("  Usage: %s <command> [args]\n\n", prog);
     printf("  Commands:\n");
-    printf("    start [--listen ADDR] [--bootstrap ADDR] [--tor] [--tor-socks-port PORT] [--tor-control-port PORT]\n");
+    printf("    start [--listen ADDR] [--bootstrap ADDR] [--tor] [--tor-socks-port PORT] [--tor-control-port PORT] [--http-port PORT]\n");
     printf("    profile create --display-name NAME [--username USER]\n");
     printf("    profile show [--user USER]\n");
     printf("    profile update [--bio TEXT] [--display-name NAME]\n");
@@ -584,14 +651,16 @@ int main(int argc, char** argv) {
         bool enable_tor = false;
         uint16_t tor_socks = 9050;
         uint16_t tor_ctrl = 9051;
+        uint16_t http_port = 0;
         for (int i = 2; i < argc; ++i) {
             if (strcmp(argv[i], "--listen") == 0 && i + 1 < argc) listen = argv[++i];
             else if (strcmp(argv[i], "--bootstrap") == 0 && i + 1 < argc) bootstrap = argv[++i];
             else if (strcmp(argv[i], "--tor") == 0) enable_tor = true;
             else if (strcmp(argv[i], "--tor-socks-port") == 0 && i + 1 < argc) tor_socks = (uint16_t)atoi(argv[++i]);
             else if (strcmp(argv[i], "--tor-control-port") == 0 && i + 1 < argc) tor_ctrl = (uint16_t)atoi(argv[++i]);
+            else if (strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) http_port = (uint16_t)atoi(argv[++i]);
         }
-        handle_start(listen, bootstrap, enable_tor, tor_socks, tor_ctrl);
+        handle_start(listen, bootstrap, enable_tor, tor_socks, tor_ctrl, http_port);
     }
     else if (cmd == "profile" && argc > 2) {
         std::string action = argv[2];

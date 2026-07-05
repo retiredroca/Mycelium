@@ -14,13 +14,14 @@ MyTube is a decentralized peer-to-peer video network — like YouTube, but witho
 
 Zero external dependencies, no virtual dispatch, no async runtime, no garbage collection. All crypto primitives are self-contained — SHA-256, HMAC, HKDF, X25519, Ed25519, and AES-256-GCM (via Win32 BCrypt) — with the same post-quantum hybrid interfaces as the original Rust spec, including Kyber-768 and Dilithium-3 stub placeholders.
 
-Every module is a single `static inline` header. The entire project builds in seconds to a 97 KB static binary.
+Every module is a single `static inline` header. The entire project builds in seconds to a ~128 KB static binary, including the embedded web UI.
 
 ### Key Features
 
 - **User-Owned Data**: Posts and media are encrypted with user-controlled keys
 - **Peer Hosting**: Friends and trusted nodes host your data for token rewards
 - **Video Hosting**: Encrypted chunked video with bandwidth-weighted peer selection and streaming slot reservations
+- **Embedded Web UI**: YouTube-style landing page served via built-in HTTP listener (`--http-port`)
 - **Tor / Onion Routing**: Run nodes over Tor hidden services with auto-derived `.onion` addresses via Ed25519 key pairs
 - **Social Mining**: Earn tokens by relaying data, hosting content, and creating engagement
 - **Quantum-Resistant**: Hybrid cryptography (X25519 + Kyber-768 + AES-256-GCM)
@@ -32,7 +33,8 @@ Every module is a single `static inline` header. The entire project builds in se
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      CLIENT LAYER                           │
-│         C++ CLI  │  (future: WASM / Native)                 │
+│    C++ CLI  │  Embedded Web UI (--http-port)                │
+│    (future: WASM / Native)                                  │
 └───────────────────────────┬─────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -103,8 +105,14 @@ cmake --build build --config Release
 # View network status
 ./build/Release/mycelium status
 
+# Start a node with embedded web UI (http://localhost:8080)
+./build/Release/mycelium start --http-port 8080
+
 # Start a node with Tor hidden service (requires Tor daemon)
 ./build/Release/mycelium start --listen /ip4/0.0.0.0/tcp/4001 --tor --tor-socks-port 9050 --tor-control-port 9051
+
+# Start with both web UI and Tor
+./build/Release/mycelium start --http-port 8080 --tor
 ```
 
 ## Video & Post Lifecycle
@@ -158,6 +166,18 @@ Videos and posts on MyTube have a Time-To-Live (TTL) that is extended through vi
 | Video Streaming Slot | Stake (returnable) | 1,000-100,000 tokens |
 | Verified Identity | Burn (permanent) | 50 tokens |
 | Network Fees | Burn (permanent) | Variable |
+
+## Web UI
+
+MyTube ships with a **YouTube-style embedded web interface** served directly from the binary. No external HTTP server, no static files — the entire HTML/CSS landing page is compiled into `myc_web.hpp` as a raw string literal and served via a built-in synchronous TCP listener.
+
+```bash
+# Start with web UI on port 8080
+./build/Release/mycelium start --http-port 8080
+# Open http://localhost:8080 in your browser
+```
+
+When combined with `--tor`, the node also displays the `.onion` web URL for privacy-preserving remote access.
 
 ## Security
 
@@ -228,6 +248,8 @@ mytube/
 │       │   └── myc_guestbook.hpp             # Guestbook entries, approval
 │       ├── media/
 │       │   └── myc_video.hpp                 # VideoMetadata, chunking, codecs
+│       ├── web/
+│       │   └── myc_web.hpp                   # Embedded MyTube HTML landing page + HTTP server
 │       ├── identity/
 │       │   └── myc_identity.hpp              # Username registry, lookup
 │       └── p2p/
@@ -253,7 +275,7 @@ mytube/
 | **Fixed buffers** | `std::array` preferred over `std::vector` wherever sizes are known at compile time |
 | **Error handling** | Integer error codes with `strerror`-style lookup tables; no exceptions |
 | **Build time** | Unity build (single translation unit) compiles in seconds |
-| **Binary size** | 97 KB release build, statically linked |
+| **Binary size** | ~128 KB release build, statically linked (includes embedded web UI) |
 
 ### Post-Quantum Readiness
 
@@ -280,7 +302,7 @@ cmake -B build && cmake --build build --config Release
 
 | Phase | Timeline | Goals |
 |-------|----------|-------|
-| **Phase 1** | Current | C++ port, core crypto, CLI, peer table, profile system, video hosting |
+| **Phase 1** | Current | C++ port, core crypto, CLI, peer table, profile system, video hosting, embedded web UI |
 | **Phase 2** | Next | Real TCP/UDP transport, Kademlia DHT, gossip protocol |
 | **Phase 3** | Future | Real liboqs integration (ML-KEM, SLH-DSA), encrypted storage |
 | **Phase 4** | Future | Token integration, staking, governance |

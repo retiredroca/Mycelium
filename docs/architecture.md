@@ -10,6 +10,7 @@ MyTube is a decentralized peer-to-peer video network built on peer-to-peer techn
 flowchart TB
     subgraph Client["Client Layer"]
         CLI[CLI Application]
+        WEBUI[Embedded Web UI]
         WEB[WebAssembly Browser]
         MOB[Mobile App]
     end
@@ -42,6 +43,7 @@ flowchart TB
     end
 
     CLI --> P2P
+    WEBUI --> P2P
     WEB --> P2P
     MOB --> P2P
     
@@ -340,6 +342,7 @@ flowchart TB
 | **Identity** | Ed25519 + UsernameRegistry | Key-based identity management |
 | **Consensus** | Proof of Stake | Network security |
 | **Video Hosting** | ChunkedFile + StreamingSlot | P2P video distribution |
+| **Web UI** | Embedded HTML in header | Built-in HTTP listener on `--http-port` |
 
 ## Roadmap Phases
 
@@ -1137,6 +1140,8 @@ mycelium/
 | Social Graph | ✅ Implemented | Follow/follower/block |
 | Identity Registry | ✅ Implemented | DHT username lookup |
 | Video Hosting | ✅ Implemented | Chunked encryption, streaming slots, bandwidth-weighted rewards |
+| Web UI / HTTP Server | ✅ Implemented | Embedded YouTube-style HTML page, `--http-port` flag |
+| Onion / Tor Integration | ✅ Implemented | `.onion` derivation from Ed25519, `--tor` CLI flags |
 | Storage Integration | 🔄 In Progress | Encrypted data handoff with Merkle proofs |
 | Real P2P Transport | 🔄 In Progress | TCP/UDP socket integration |
 
@@ -1223,6 +1228,8 @@ Video hosting rewards use a bandwidth multiplier: peers who serve more Mbps rece
 | Video Gossip | `src/p2p/myc_p2p.hpp` | kGossipVideoChunkRequest/Response |
 | Token Rewards | `src/token/myc_token.hpp` | claim_video_hosting with bandwidth weight |
 | CLI Commands | `src/main.cpp` | `video upload`, `video manifest` |
+| Web UI / HTTP Server | `src/web/myc_web.hpp` | Embedded HTML page (`kMyTubeWebPage`), `serve_http_page()` |
+| Web UI / HTTP Server | `src/main.cpp` | `--http-port` CLI flag, socket accept loop |
 | Tor / Onion | `src/crypto/myc_crypto.hpp` | `.onion` address derivation from Ed25519 pubkey |
 | Tor / Onion | `src/p2p/myc_p2p.hpp` | `enable_tor`, `onion_address` in node info |
 | Tor / Onion | `src/main.cpp` | `--tor`, `--tor-socks-port`, `--tor-control-port` CLI flags |
@@ -1321,3 +1328,92 @@ flowchart TB
 | Control port protocol | Real socket code (Phase 2 transport) | 🔄 Planned |
 
 The node generates and displays its `.onion` address immediately. Actual SOCKS5 proxy connections and hidden service registration via the control port will be wired when the real TCP transport layer is implemented. Until then, the node advertises its `.onion` address in peer announcements and is ready for privacy-preserving connections.
+
+---
+
+## Embedded Web UI
+
+### Overview
+
+MyTube ships with a **YouTube-style embedded web interface** compiled directly into the binary. The entire HTML/CSS landing page (`kMyTubeWebPage`) is stored as a C++ raw string literal in `src/web/myc_web.hpp` — no external HTTP server, no static files, no web framework.
+
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph Binary["mycelium.exe (~128 KB)"]
+        CLI[CLI Commands]
+        WEB[kMyTubeWebPage<br/>Raw HTML String]
+        HTTP[HTTP Listener<br/>std::thread]
+        NODE[Mycelium Node]
+    end
+    
+    subgraph Browser["Browser"]
+        PAGE[YouTube-style UI<br/>Pure HTML+CSS]
+    end
+    
+    USER[User runs<br/>--http-port 8080]
+    USER --> CLI
+    CLI --> HTTP
+    HTTP -->|accept| WEB
+    WEB -->|HTTP response| PAGE
+    NODE -->|node info| WEB
+```
+
+### Server Implementation
+
+The HTTP listener is a minimal synchronous TCP server running on the main thread:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 HTTP REQUEST HANDLING                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. socket() → AF_INET, SOCK_STREAM                         │
+│  2. bind() → INADDR_ANY : <http_port>                       │
+│  3. listen() → SOMAXCONN                                    │
+│  4. loop:                                                   │
+│     ├── accept() → client socket                            │
+│     ├── recv() → read (and discard) HTTP request            │
+│     ├── send() → HTTP/1.1 200 OK + headers                  │
+│     ├── send() → kMyTubeWebPage (send-all loop)             │
+│     ├── shutdown(SD_SEND)                                   │
+│     └── closesocket()                                       │
+│                                                              │
+│  Runs until Ctrl+C or bind/accept failure.                   │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Page Content
+
+The embedded landing page features:
+
+- **Fixed navbar** with MyTube logo, search bar placeholder, and icon buttons
+- **Dark sidebar** with Home, Trending, Videos, Storage navigation, subscriptions, and network stats
+- **Red gradient banner** with welcome message, binary size, language, and QR badge
+- **Video grid** (8 cards) showcasing protocol features with icon placeholders and duration badges
+- **Tokenomics section** with total supply, emission rate, and reward distribution breakdown
+- **Footer** with GitHub link, MIT license, and technology tagline
+- **Responsive design** with mobile breakpoint at 768px (hides sidebar, stacks layout)
+
+### Integration Points
+
+| Component | File | Role |
+|-----------|------|------|
+| HTML Content | `src/web/myc_web.hpp` | `kMyTubeWebPage` — raw string literal (~10.8 KB) |
+| HTTP Handler | `src/web/myc_web.hpp` | `serve_http_page()` — read request, send response, graceful shutdown |
+| CLI Flag | `src/main.cpp` | `--http-port PORT` — enables HTTP listener |
+| Tor Display | `src/main.cpp` | Shows `.onion` web URL when both `--http-port` and `--tor` are active |
+
+### CLI Usage
+
+```bash
+# Start with web UI
+./build/Release/mycelium start --http-port 8080
+
+# Combined with Tor
+./build/Release/mycelium start --http-port 8080 --tor
+```
+
+The node prints the local URL (`http://localhost:PORT`) and, if Tor is enabled, the `.onion` URL for privacy-preserving remote access.
