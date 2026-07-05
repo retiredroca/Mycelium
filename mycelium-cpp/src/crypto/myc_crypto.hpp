@@ -862,3 +862,50 @@ static inline std::string base64_encode(const uint8_t* data, size_t len) {
     }
     return out;
 }
+
+// ============================================================
+// Base32 encoding (RFC 4648, for Tor v3 onion addresses)
+// ============================================================
+static inline std::string base32_encode(const uint8_t* data, size_t len) {
+    static const char* b32 = "abcdefghijklmnopqrstuvwxyz234567";
+    std::string out;
+    out.reserve((len + 4) / 5 * 8);
+    for (size_t i = 0; i < len; i += 5) {
+        uint64_t v = 0;
+        size_t remaining = len - i;
+        for (size_t j = 0; j < 5 && (i + j) < len; ++j)
+            v = (v << 8) | data[i + j];
+        size_t out_bits = remaining < 5 ? (remaining * 8 + 4) / 5 * 5 : 40;
+        (void)out_bits;
+        for (int j = 0; j < 8; ++j) {
+            if (j * 5 < remaining * 8)
+                out += b32[(v >> (5 * (7 - j))) & 0x1F];
+        }
+    }
+    return out;
+}
+
+// ============================================================
+// Tor v3 onion address derivation from Ed25519 public key
+// ============================================================
+static inline std::string onion_address_from_pubkey(const std::array<uint8_t, 32>& pubkey) {
+    // Tor v3 onion = base32( pubkey(32) || checksum(2) || version(1) ) + ".onion"
+    // checksum = SHA-256( ".onion checksum" || pubkey || version_byte )[0:2]
+    // version_byte = 0x03
+    static const uint8_t prefix[] = ".onion checksum";
+    Sha256Ctx ctx;
+    sha256_init(&ctx);
+    sha256_update(&ctx, prefix, 15);
+    sha256_update(&ctx, pubkey.data(), 32);
+    uint8_t version = 0x03;
+    sha256_update(&ctx, &version, 1);
+    std::array<uint8_t, 32> checksum;
+    sha256_final(&ctx, checksum.data());
+
+    uint8_t raw[35];
+    memcpy(raw, pubkey.data(), 32);
+    raw[32] = checksum[0];
+    raw[33] = checksum[1];
+    raw[34] = 0x03;
+    return base32_encode(raw, 35) + ".onion";
+}

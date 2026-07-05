@@ -5,6 +5,7 @@
 #include <optional>
 #include "crypto/myc_crypto.hpp"
 #include "protocol/myc_protocol.hpp"
+#include "media/myc_video.hpp"
 
 static inline constexpr double kHypedThreshold = 1000.0;
 
@@ -12,6 +13,8 @@ struct PostContent {
     std::string text;
     std::vector<std::string> media_cids;
     std::vector<std::string> mentions;
+    std::string video_cid;
+    VideoMetadata video_meta;
 };
 
 enum StorageType : uint8_t { kStorageLocal = 0, kStorageDistributed = 1, kStoragePermanent = 2 };

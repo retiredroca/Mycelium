@@ -147,6 +147,44 @@ struct EncryptedDataHandoff {
     }
 };
 
+struct StreamingSlot {
+    std::string slot_id;
+    std::string video_cid;
+    std::string host_peer_id;
+    std::string consumer_peer_id;
+    uint32_t reserved_mbps = 0;
+    uint64_t duration_secs = 0;
+    int64_t started_at = 0;
+    int64_t expires_at = 0;
+    bool active = false;
+
+    static inline StreamingSlot create(
+        const std::string& vcid,
+        const std::string& host,
+        const std::string& consumer,
+        uint32_t mbps,
+        uint64_t secs)
+    {
+        StreamingSlot s;
+        std::array<uint8_t, 32> id_buf;
+        random_bytes(id_buf.data(), 32);
+        s.slot_id = base64_encode(id_buf.data(), 16);
+        s.video_cid = vcid;
+        s.host_peer_id = host;
+        s.consumer_peer_id = consumer;
+        s.reserved_mbps = mbps;
+        s.duration_secs = secs;
+        s.started_at = ProtocolMessage{}.now_sec();
+        s.expires_at = s.started_at + (int64_t)secs;
+        s.active = true;
+        return s;
+    }
+
+    bool is_expired() const {
+        return !active || ProtocolMessage{}.now_sec() >= expires_at;
+    }
+};
+
 // Compute CID-style identifier
 static inline std::string compute_cid(const uint8_t* data, size_t len) {
     auto h = sha256(data, len);

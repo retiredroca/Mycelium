@@ -1,6 +1,6 @@
-# Contributing to Mycelium Protocol
+# Contributing to MyTube Protocol
 
-Thank you for your interest in contributing to Mycelium!
+Thank you for your interest in contributing to MyTube!
 
 ## Code of Conduct
 
@@ -125,4 +125,4 @@ Instead, contact us privately at security@example.com.
 
 ---
 
-Thank you for contributing to Mycelium!
+Thank you for contributing to MyTube!

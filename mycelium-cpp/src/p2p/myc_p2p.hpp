@@ -20,12 +20,14 @@ enum NodeCap : uint8_t {
     kCapFull = 0,
     kCapStorage = 1,
     kCapRelay = 2,
+    kCapVideoHosting = 3,
 };
 
 struct NodeCapInfo {
     NodeCap cap;
     uint64_t max_gb = 0;
     uint32_t bandwidth_mbps = 0;
+    uint32_t max_concurrent_streams = 0;
 };
 
 // ============================================================
@@ -117,6 +119,8 @@ enum GossipPayloadType : uint8_t {
     kGossipPeerAnnounce = 2,
     kGossipSyncRequest = 3,
     kGossipSyncResponse = 4,
+    kGossipVideoChunkRequest = 5,
+    kGossipVideoChunkResponse = 6,
 };
 
 struct GossipMessage {
@@ -226,6 +230,10 @@ struct P2pConfig {
     std::vector<std::string> bootstrap_nodes;
     bool enable_mdns = true;
     bool enable_relay = true;
+    bool enable_tor = false;
+    uint16_t tor_socks_port = 9050;
+    uint16_t tor_control_port = 9051;
+    std::string onion_service_dir;
 };
 
 struct LocalNodeInfo {
@@ -234,6 +242,7 @@ struct LocalNodeInfo {
     std::vector<NodeCapInfo> capabilities;
     int64_t started_at = 0;
     std::string version = "0.1.0";
+    std::string onion_address;
 };
 
 struct MyceliumNode {
@@ -258,6 +267,8 @@ struct MyceliumNode {
         node.local_info.capabilities = config.capabilities;
         node.local_info.started_at = ProtocolMessage{}.now_sec();
         node.peer_table.local_peer_id = node.local_info.peer_id;
+        if (config.enable_tor)
+            node.local_info.onion_address = onion_address_from_pubkey(pk);
         return node;
     }
 

@@ -15,25 +15,92 @@
 #include "guestbook/myc_guestbook.hpp"
 #include "identity/myc_identity.hpp"
 #include "p2p/myc_p2p.hpp"
+#include "media/myc_video.hpp"
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <windows.h>
 #pragma comment(lib, "ws2_32")
 #endif
 
 // ============================================================
-// Helper: print box
+// ANSI color helpers (YouTube red)
 // ============================================================
-static inline void print_box_header(const char* title) {
-    printf("\n\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
-    printf("\xBA  %s\n", title);
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+static inline const char* ansi_red() {
+#ifdef _WIN32
+    static bool enabled = false;
+    static bool checked = false;
+    if (!checked) {
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD mode = 0;
+        if (GetConsoleMode(h, &mode)) {
+            SetConsoleMode(h, mode | 0x0004);
+            enabled = true;
+        }
+        checked = true;
+    }
+    return enabled ? "\033[38;2;255;0;0m" : "";
+#else
+    return "\033[38;2;255;0;0m";
+#endif
+}
+
+static inline const char* ansi_bold_red() {
+#ifdef _WIN32
+    static bool enabled = false;
+    static bool checked = false;
+    if (!checked) {
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD mode = 0;
+        if (GetConsoleMode(h, &mode)) {
+            SetConsoleMode(h, mode | 0x0004);
+            enabled = true;
+        }
+        checked = true;
+    }
+    return enabled ? "\033[1;38;2;255;0;0m" : "";
+#else
+    return "\033[1;38;2;255;0;0m";
+#endif
+}
+
+static inline const char* ansi_reset() {
+#ifdef _WIN32
+    static bool enabled = false;
+    static bool checked = false;
+    if (!checked) {
+        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+        DWORD mode = 0;
+        if (GetConsoleMode(h, &mode)) {
+            SetConsoleMode(h, mode | 0x0004);
+            enabled = true;
+        }
+        checked = true;
+    }
+    return enabled ? "\033[0m" : "";
+#else
+    return "\033[0m";
+#endif
+}
+
+#define R ansi_bold_red()
+#define X ansi_reset()
+
+// ============================================================
+// Helper: YouTube-style red header bar
+// ============================================================
+static inline void print_yt_header(const char* icon, const char* title) {
+    printf("\n%s============================================%s\n", R, X);
+    printf("%s  %s  %s%s\n", R, icon ? icon : "", title ? title : "", X);
+    printf("%s============================================%s\n", R, X);
+}
+
+static inline void print_yt_line(const char* label, const char* value) {
+    printf("  %s: %s\n", label, value ? value : "");
+}
+
+static inline void print_yt_sep() {
+    printf("%s--------------------------------------------%s\n", R, X);
 }
 
 // ============================================================
@@ -48,6 +115,7 @@ struct AppState {
     Tokenomics tokenomics;
     MyceliumNode* node = nullptr;
     bool node_running = false;
+    VideoMetadata current_video;
 };
 
 static AppState g_state;
@@ -55,23 +123,37 @@ static AppState g_state;
 // ============================================================
 // Command handlers
 // ============================================================
-static inline void handle_start(const char* listen, const char* bootstrap) {
+static inline void handle_start(const char* listen, const char* bootstrap,
+                                 bool enable_tor, uint16_t tor_socks, uint16_t tor_ctrl) {
     P2pConfig cfg;
     cfg.listen_addresses.push_back(listen ? listen : "/ip4/0.0.0.0/tcp/0");
     if (bootstrap) cfg.bootstrap_nodes.push_back(bootstrap);
     cfg.capabilities.push_back({kCapFull});
+    cfg.enable_tor = enable_tor;
+    cfg.tor_socks_port = tor_socks;
+    cfg.tor_control_port = tor_ctrl;
 
     g_state.node = new MyceliumNode(MyceliumNode::create(cfg));
     g_state.node_running = true;
 
-    print_box_header("NODE STARTED");
-    printf("\xBA  Peer ID: %s\n", g_state.node->local_peer_id().c_str());
-    printf("\xBA  Listening: %s\n", listen ? listen : "default");
-    printf("\xBA  Peers: %zu\n", g_state.node->peer_count());
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+    print_yt_header("\xF0\x9F\x94\x8C", "MYTUBE NODE STARTED");
+    print_yt_line("Peer ID", g_state.node->local_peer_id().c_str());
+    print_yt_line("Listening", listen ? listen : "default");
+    char peers[32];
+    snprintf(peers, sizeof(peers), "%zu", g_state.node->peer_count());
+    print_yt_line("Peers", peers);
+    if (enable_tor) {
+        print_yt_line("Tor", "Enabled");
+        if (!g_state.node->local_info.onion_address.empty()) {
+            char socks[16];
+            snprintf(socks, sizeof(socks), "%u", tor_socks);
+            print_yt_line("SOCKS Port", socks);
+            print_yt_line("Onion Address", g_state.node->local_info.onion_address.c_str());
+        }
+    } else {
+        print_yt_line("Tor", "Disabled");
+    }
+    print_yt_sep();
 }
 
 static inline void handle_profile_create(const char* display_name, const char* username) {
@@ -86,53 +168,52 @@ static inline void handle_profile_create(const char* display_name, const char* u
     KeyPair kp = x25519_keygen();
     g_state.my_profile = builder.sign(kp).build();
 
-    print_box_header("PROFILE CREATED");
-    printf("\xBA  Display Name: %s\n", g_state.my_profile.display_name.c_str());
-    if (!g_state.my_profile.username.empty())
-        printf("\xBA  Username: @%s\n", g_state.my_profile.username.c_str());
+    print_yt_header("\xF0\x9F\x93\xBA", "CHANNEL CREATED");
+    print_yt_line("Channel", g_state.my_profile.display_name.c_str());
+    if (!g_state.my_profile.username.empty()) {
+        std::string at = "@" + g_state.my_profile.username;
+        print_yt_line("Username", at.c_str());
+    }
     auto cid = compute_profile_cid(g_state.my_profile);
-    printf("\xBA  CID: %s\n", cid.c_str());
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+    print_yt_line("Channel CID", cid.c_str());
+    print_yt_sep();
 }
 
 static inline void handle_profile_show(const char* user) {
     if (g_state.my_profile.peer_id.empty()) {
-        printf("No profile. Use 'profile create' first.\n");
+        printf("No channel. Use 'profile create' first.\n");
         return;
     }
-    print_box_header("PROFILE VIEW");
-    printf("\xBA  Peer ID: %s\n", g_state.my_profile.peer_id.c_str());
-    printf("\xBA  Username: @%s\n", g_state.my_profile.username.c_str());
-    printf("\xBA  Display Name: %s\n", g_state.my_profile.display_name.c_str());
+    print_yt_header("\xF0\x9F\x93\xBA", "CHANNEL PAGE");
+    print_yt_line("Channel", g_state.my_profile.display_name.c_str());
+    if (!g_state.my_profile.username.empty()) {
+        std::string at = "@" + g_state.my_profile.username;
+        print_yt_line("Username", at.c_str());
+    }
     if (!g_state.my_profile.bio.empty())
-        printf("\xBA  Bio: %s\n", g_state.my_profile.bio.c_str());
-    printf("\xBA  Links: %zu\n", g_state.my_profile.links.size());
-    printf("\xBA  Theme: %s\n", theme_preset_name(g_state.my_profile.theme.preset));
-    printf("\xBA  Sections: %zu\n", g_state.my_profile.layout.sections.size());
+        print_yt_line("About", g_state.my_profile.bio.c_str());
+    char links[32];
+    snprintf(links, sizeof(links), "%zu links", g_state.my_profile.links.size());
+    print_yt_line("Links", links);
+    print_yt_line("Theme", theme_preset_name(g_state.my_profile.theme.preset));
     auto cid = compute_profile_cid(g_state.my_profile);
-    printf("\xBA  CID: %s\n", cid.c_str());
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+    print_yt_line("Channel CID", cid.c_str());
+    print_yt_sep();
 }
 
 static inline void handle_profile_update(const char* bio, const char* display_name) {
-    if (bio) { g_state.my_profile.bio = bio; printf("Bio updated.\n"); }
-    if (display_name) { g_state.my_profile.display_name = display_name; printf("Display name updated.\n"); }
+    if (bio) { g_state.my_profile.bio = bio; printf("  Bio updated.\n"); }
+    if (display_name) { g_state.my_profile.display_name = display_name; printf("  Display name updated.\n"); }
 }
 
 static inline void handle_profile_avatar(const char* cid) {
     g_state.my_profile.avatar_cid = cid;
-    printf("Avatar set to: %s\n", cid);
+    printf("  Avatar set to: %s\n", cid);
 }
 
 static inline void handle_profile_banner(const char* cid) {
     g_state.my_profile.banner_cid = cid;
-    printf("Banner set to: %s\n", cid);
+    printf("  Banner set to: %s\n", cid);
 }
 
 static inline void handle_profile_link(const char* title, const char* url) {
@@ -143,7 +224,7 @@ static inline void handle_profile_link(const char* title, const char* url) {
     link.title = title;
     link.url = url;
     g_state.my_profile.links.push_back(link);
-    printf("Link added: %s -> %s\n", title, url);
+    printf("  Link added: %s -> %s\n", title, url);
 }
 
 static inline void handle_profile_theme(const char* preset_name, const char* primary) {
@@ -160,7 +241,7 @@ static inline void handle_profile_theme(const char* preset_name, const char* pri
     }
     g_state.my_profile.theme = Theme::from_preset(p);
     if (primary) g_state.my_profile.theme.colors.primary = primary;
-    printf("Theme set to: %s\n", theme_preset_name(p));
+    printf("  Theme set to: %s\n", theme_preset_name(p));
 }
 
 static inline void handle_post_create(const char* content) {
@@ -169,21 +250,20 @@ static inline void handle_post_create(const char* content) {
         base64_encode(kp.pk.point.data(), 16),
         content ? content : "",
         kp);
-    printf("Post created: %s\n", post.id.c_str());
+    printf("  Post created: %s\n", post.id.c_str());
     printf("  Author: %s\n", post.author.c_str());
-    printf("  TTL: %llu seconds\n", (unsigned long long)post.ttl_seconds);
+    char ttl[32];
+    snprintf(ttl, sizeof(ttl), "%llu seconds", (unsigned long long)post.ttl_seconds);
+    print_yt_line("TTL", ttl);
 
     if (g_state.node) g_state.node->store_post(post);
 }
 
 static inline void handle_feed(int limit) {
     (void)limit;
-    print_box_header("RECENT POSTS");
-    printf("\xBA  No posts (connect to network to sync)\n");
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+    print_yt_header("\xF0\x9F\x93\xB1", "RECOMMENDED VIDEOS");
+    printf("  No videos yet (connect to network to sync)\n");
+    print_yt_sep();
 }
 
 static inline void handle_wallet_create() {
@@ -193,77 +273,81 @@ static inline void handle_wallet_create() {
     memcpy(g_state.wallet.public_key.data(), pk.data(), 32);
     g_state.wallet.receive(1'000'000);
     auto addr = base64_encode(pk.data(), 16);
-    printf("Wallet created: SOVEX%s\n", addr.c_str());
+    printf("  Wallet created: MYT%s\n", addr.c_str());
 }
 
 static inline void handle_wallet_balance() {
-    print_box_header("WALLET BALANCE");
-    printf("\xBA  Balance:  %llu MYCELIUM\n", (unsigned long long)g_state.wallet.balance);
-    printf("\xBA  Staked:   %llu MYCELIUM\n", (unsigned long long)g_state.wallet.staked_balance);
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+    print_yt_header("\xF0\x9F\x92\xB0", "WALLET EARNINGS");
+    char bal[32], staked[32];
+    snprintf(bal, sizeof(bal), "%llu MYTUBE", (unsigned long long)g_state.wallet.balance);
+    snprintf(staked, sizeof(staked), "%llu MYTUBE", (unsigned long long)g_state.wallet.staked_balance);
+    print_yt_line("Balance", bal);
+    print_yt_line("Staked", staked);
+    print_yt_sep();
 }
 
 static inline void handle_wallet_stake(uint64_t amount) {
     auto err = g_state.wallet.stake(amount);
-    if (err == kTokenOk)
-        printf("Staked %llu tokens.\n", (unsigned long long)amount);
-    else
-        printf("Error: %s\n", token_strerror(err));
+    if (err == kTokenOk) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Staked %llu MYTUBE tokens.", (unsigned long long)amount);
+        printf("  %s\n", buf);
+    } else
+        printf("  Error: %s\n", token_strerror(err));
 }
 
 static inline void handle_wallet_unstake(uint64_t amount) {
     auto err = g_state.wallet.unstake(amount);
-    if (err == kTokenOk)
-        printf("Unstaked %llu tokens.\n", (unsigned long long)amount);
-    else
-        printf("Error: %s\n", token_strerror(err));
+    if (err == kTokenOk) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Unstaked %llu MYTUBE tokens.", (unsigned long long)amount);
+        printf("  %s\n", buf);
+    } else
+        printf("  Error: %s\n", token_strerror(err));
 }
 
 static inline void handle_wallet_send(const char* to, uint64_t amount) {
     auto err = g_state.wallet.send(amount);
     if (err == kTokenOk)
-        printf("Sent %llu to %s.\n", (unsigned long long)amount, to ? to : "unknown");
+        printf("  Sent %llu MYTUBE to %s.\n", (unsigned long long)amount, to ? to : "unknown");
     else
-        printf("Error: %s\n", token_strerror(err));
+        printf("  Error: %s\n", token_strerror(err));
 }
 
 static inline void handle_social_follow(const char* user) {
     if (!user) return;
     auto err = g_state.social.follow(user);
     if (err == kFollowOk)
-        printf("Following %s.\n", user);
+        printf("  Subscribed to %s.\n", user);
     else
-        printf("Error: %s\n", follow_strerror(err));
+        printf("  Error: %s\n", follow_strerror(err));
 }
 
 static inline void handle_social_unfollow(const char* user) {
     if (!user) return;
     auto err = g_state.social.unfollow(user);
     if (err == kFollowOk)
-        printf("Unfollowed %s.\n", user);
+        printf("  Unsubscribed from %s.\n", user);
     else
-        printf("Error: %s\n", follow_strerror(err));
+        printf("  Error: %s\n", follow_strerror(err));
 }
 
 static inline void handle_social_block(const char* user) {
     if (!user) return;
     auto err = g_state.social.block(user);
     if (err == kFollowOk)
-        printf("Blocked %s.\n", user);
+        printf("  Blocked %s.\n", user);
     else
-        printf("Error: %s\n", follow_strerror(err));
+        printf("  Error: %s\n", follow_strerror(err));
 }
 
 static inline void handle_social_unblock(const char* user) {
     if (!user) return;
     auto err = g_state.social.unblock(user);
     if (err == kFollowOk)
-        printf("Unblocked %s.\n", user);
+        printf("  Unblocked %s.\n", user);
     else
-        printf("Error: %s\n", follow_strerror(err));
+        printf("  Error: %s\n", follow_strerror(err));
 }
 
 static inline void handle_identity_register(const char* username) {
@@ -275,18 +359,18 @@ static inline void handle_identity_register(const char* username) {
     auto err = g_state.identity.register_username(
         peer_id.data(), peer_id.size(), username, priv);
     if (err == kIdentityOk)
-        printf("Registered @%s.\n", username);
+        printf("  Registered @%s.\n", username);
     else
-        printf("Error: %s\n", identity_strerror(err));
+        printf("  Error: %s\n", identity_strerror(err));
 }
 
 static inline void handle_identity_lookup(const char* username) {
     if (!username) return;
     auto* rec = g_state.identity.lookup(username);
     if (rec) {
-        printf("@%s -> %s\n", username, base64_encode(rec->peer_id.data(), rec->peer_id.size()).c_str());
+        printf("  @%s -> %s\n", username, base64_encode(rec->peer_id.data(), rec->peer_id.size()).c_str());
     } else {
-        printf("@%s not found.\n", username);
+        printf("  @%s not found.\n", username);
     }
 }
 
@@ -299,87 +383,187 @@ static inline void handle_guestbook_sign(const char* user, const char* message, 
         message ? message : "");
     auto err = g_state.guestbook.sign(entry);
     if (err == kGbOk)
-        printf("Signed %s's guestbook.\n", user ? user : "?");
+        printf("  Signed %s's guestbook.\n", user ? user : "?");
     else
-        printf("Error: %s\n", gb_strerror(err));
+        printf("  Error: %s\n", gb_strerror(err));
 }
 
 static inline void handle_guestbook_show(const char* user) {
-    print_box_header("GUESTBOOK");
-    printf("\xBA  Entries for %s:\n", user ? user : "?");
+    print_yt_header("\xF0\x9F\x93\x9D", "COMMENTS");
+    printf("  Comments for %s:\n", user ? user : "?");
     for (auto& [id, entry] : g_state.guestbook.entries) {
         (void)id;
-        printf("\xBA    %s: %s\n", entry.author_name.c_str(), entry.content.c_str());
+        printf("    %s: %s\n", entry.author_name.c_str(), entry.content.c_str());
     }
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+    print_yt_sep();
 }
 
 static inline void handle_network_peers() {
-    print_box_header("CONNECTED PEERS");
+    print_yt_header("\xF0\x9F\x94\x97", "CONNECTED PEERS");
     if (g_state.node_running && g_state.node) {
         for (auto& [id, info] : g_state.node->peer_table.get_all_peers()) {
-            printf("\xBA  %s (last seen: %lld)\n", id.c_str(), (long long)info.last_seen);
+            printf("  %s (last seen: %lld)\n", id.c_str(), (long long)info.last_seen);
         }
     } else {
-        printf("\xBA  No peers (start node first)\n");
+        printf("  No peers (start node first)\n");
     }
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+    print_yt_sep();
 }
 
 static inline void handle_status() {
-    print_box_header("MYCELIUM PROTOCOL STATUS");
-    printf("\xBA  Version: 0.1.0\n");
-    printf("\xBA  Network: %s\n", g_state.node_running ? "Online" : "Offline");
-    if (g_state.node_running && g_state.node)
-        printf("\xBA  Peers: %zu\n", g_state.node->peer_count());
-    printf("\xBA  Supply: %llu MYCELIUM\n", (unsigned long long)g_state.tokenomics.total_supply);
-    printf("\xBA  Epoch: %llu\n", (unsigned long long)g_state.tokenomics.current_epoch);
-    printf("\xBA  Profile: %s\n", g_state.my_profile.peer_id.empty() ? "None" : "Created");
-    printf("\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4"
-           "\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\xC4\n");
+    print_yt_header("\xF0\x9F\x8E\xAC", "MYTUBE STATUS");
+    print_yt_line("Version", "0.1.0");
+    print_yt_line("Network", g_state.node_running ? "Online" : "Offline");
+    if (g_state.node_running && g_state.node) {
+        char peers[32];
+        snprintf(peers, sizeof(peers), "%zu", g_state.node->peer_count());
+        print_yt_line("Peers", peers);
+        if (!g_state.node->local_info.onion_address.empty()) {
+            print_yt_line("Tor", "Enabled");
+            print_yt_line("Onion", g_state.node->local_info.onion_address.c_str());
+        } else {
+            print_yt_line("Tor", "Disabled");
+        }
+    }
+    char supply[64];
+    snprintf(supply, sizeof(supply), "%llu MYTUBE", (unsigned long long)g_state.tokenomics.total_supply);
+    print_yt_line("Supply", supply);
+    char epoch[32];
+    snprintf(epoch, sizeof(epoch), "%llu", (unsigned long long)g_state.tokenomics.current_epoch);
+    print_yt_line("Epoch", epoch);
+    print_yt_line("Channel", g_state.my_profile.peer_id.empty() ? "None" : "Created");
+    char videos[32];
+    snprintf(videos, sizeof(videos), "%s uploaded",
+             g_state.current_video.video_id.empty() ? "0" : "1");
+    print_yt_line("Videos", videos);
+    print_yt_sep();
+}
+
+// ============================================================
+// Video handlers
+// ============================================================
+static inline void handle_video_upload(
+    const char* video_id,
+    uint64_t duration_ms,
+    uint32_t width,
+    uint32_t height,
+    uint32_t codec_val,
+    uint64_t bitrate_bps,
+    uint32_t chunk_count)
+{
+    if (!video_id) { printf("  Error: --video-id is required\n"); return; }
+    VideoCodec codec = (VideoCodec)(codec_val > 3 ? 0 : codec_val);
+    g_state.current_video = VideoMetadata::create(
+        video_id, duration_ms, width, height, codec, bitrate_bps);
+
+    for (uint32_t i = 0; i < chunk_count; ++i) {
+        std::array<uint8_t, 32> chunk_hash;
+        random_bytes(chunk_hash.data(), 32);
+        std::array<uint8_t, 32> cid_buf;
+        random_bytes(cid_buf.data(), 16);
+        std::string chunk_cid = "QmVc" + base64_encode(cid_buf.data(), 16).substr(0, 44);
+        g_state.current_video.add_chunk(chunk_cid, i,
+            (uint64_t)i * kDefaultChunkSizeBytes,
+            kDefaultChunkSizeBytes,
+            std::vector<uint8_t>(chunk_hash.begin(), chunk_hash.end()));
+    }
+
+    auto manifest_cid = compute_video_cid(g_state.current_video);
+
+    print_yt_header("\xF0\x9F\x93\xB9", "VIDEO UPLOADED");
+    print_yt_line("Video ID", video_id);
+    print_yt_line("Manifest CID", manifest_cid.c_str());
+    print_yt_line("Codec", video_codec_name(g_state.current_video.codec));
+    char res[32];
+    snprintf(res, sizeof(res), "%ux%u", g_state.current_video.width, g_state.current_video.height);
+    print_yt_line("Resolution", res);
+    char dur[32];
+    snprintf(dur, sizeof(dur), "%llu ms", (unsigned long long)g_state.current_video.duration_ms);
+    print_yt_line("Duration", dur);
+    char br[32];
+    snprintf(br, sizeof(br), "%llu bps", (unsigned long long)g_state.current_video.bitrate_bps);
+    print_yt_line("Bitrate", br);
+    char chunks[32];
+    snprintf(chunks, sizeof(chunks), "%zu chunks", g_state.current_video.chunks.size());
+    print_yt_line("Chunks", chunks);
+    char sz[32];
+    snprintf(sz, sizeof(sz), "%llu bytes", (unsigned long long)g_state.current_video.total_size_bytes());
+    print_yt_line("Total Size", sz);
+    print_yt_sep();
+}
+
+static inline void handle_video_manifest() {
+    if (g_state.current_video.video_id.empty()) {
+        printf("  No video uploaded yet. Use 'video upload' first.\n");
+        return;
+    }
+    auto manifest_cid = compute_video_cid(g_state.current_video);
+
+    print_yt_header("\xF0\x9F\x93\x84", "VIDEO MANIFEST");
+    print_yt_line("Manifest CID", manifest_cid.c_str());
+    print_yt_line("Video ID", g_state.current_video.video_id.c_str());
+    print_yt_line("Codec", video_codec_name(g_state.current_video.codec));
+    char res[32];
+    snprintf(res, sizeof(res), "%ux%u", g_state.current_video.width, g_state.current_video.height);
+    print_yt_line("Resolution", res);
+    char br[32];
+    snprintf(br, sizeof(br), "%llu bps", (unsigned long long)g_state.current_video.bitrate_bps);
+    print_yt_line("Bitrate", br);
+    char dur[32];
+    snprintf(dur, sizeof(dur), "%llu ms", (unsigned long long)g_state.current_video.duration_ms);
+    print_yt_line("Duration", dur);
+    char cksz[32];
+    snprintf(cksz, sizeof(cksz), "%u bytes", g_state.current_video.chunk_size_bytes);
+    print_yt_line("Chunk Size", cksz);
+    printf("  Chunks:\n");
+    for (auto& c : g_state.current_video.chunks) {
+        printf("    [%u] offset=%llu len=%llu cid=%s\n",
+               c.index,
+               (unsigned long long)c.byte_offset,
+               (unsigned long long)c.byte_length,
+               c.chunk_cid.c_str());
+    }
+    print_yt_sep();
 }
 
 // ============================================================
 // Simple arg parser
 // ============================================================
 static inline void print_usage(const char* prog) {
-    printf("Mycelium Protocol v0.1.0\n");
-    printf("Usage: %s <command> [args]\n\n", prog);
-    printf("Commands:\n");
-    printf("  start [--listen ADDR] [--bootstrap ADDR]\n");
-    printf("  profile create --display-name NAME [--username USER]\n");
-    printf("  profile show [--user USER]\n");
-    printf("  profile update [--bio TEXT] [--display-name NAME]\n");
-    printf("  profile avatar --cid CID\n");
-    printf("  profile banner --cid CID\n");
-    printf("  profile link --title T --url U\n");
-    printf("  profile theme [--preset P] [--primary COLOR]\n");
-    printf("  post --content TEXT\n");
-    printf("  feed [--limit N]\n");
-    printf("  wallet create\n");
-    printf("  wallet balance\n");
-    printf("  wallet stake --amount N\n");
-    printf("  wallet unstake --amount N\n");
-    printf("  wallet send --to ADDR --amount N\n");
-    printf("  social follow --user U\n");
-    printf("  social unfollow --user U\n");
-    printf("  social block --user U\n");
-    printf("  social unblock --user U\n");
-    printf("  identity register --username U\n");
-    printf("  identity lookup --username U\n");
-    printf("  guestbook sign --user U --message M [--name N]\n");
-    printf("  guestbook show --user U\n");
-    printf("  network peers\n");
-    printf("  status\n");
-    printf("  help\n");
+    printf("\n%s============================================%s\n", R, X);
+    printf("%s  \xF0\x9F\x8E\xAC  MYTUBE PROTOCOL v0.1.0%s\n", R, X);
+    printf("%s============================================%s\n", R, X);
+    printf("  A YouTube-like P2P video network\n\n");
+    printf("  Usage: %s <command> [args]\n\n", prog);
+    printf("  Commands:\n");
+    printf("    start [--listen ADDR] [--bootstrap ADDR] [--tor] [--tor-socks-port PORT] [--tor-control-port PORT]\n");
+    printf("    profile create --display-name NAME [--username USER]\n");
+    printf("    profile show [--user USER]\n");
+    printf("    profile update [--bio TEXT] [--display-name NAME]\n");
+    printf("    profile avatar --cid CID\n");
+    printf("    profile banner --cid CID\n");
+    printf("    profile link --title T --url U\n");
+    printf("    profile theme [--preset P] [--primary COLOR]\n");
+    printf("    post --content TEXT\n");
+    printf("    feed [--limit N]\n");
+    printf("    wallet create\n");
+    printf("    wallet balance\n");
+    printf("    wallet stake --amount N\n");
+    printf("    wallet unstake --amount N\n");
+    printf("    wallet send --to ADDR --amount N\n");
+    printf("    social follow --user U\n");
+    printf("    social unfollow --user U\n");
+    printf("    social block --user U\n");
+    printf("    social unblock --user U\n");
+    printf("    identity register --username U\n");
+    printf("    identity lookup --username U\n");
+    printf("    guestbook sign --user U --message M [--name N]\n");
+    printf("    guestbook show --user U\n");
+    printf("    video upload --video-id ID --duration DUR --width W --height H [--codec C] [--bitrate B] [--chunks N]\n");
+    printf("    video manifest\n");
+    printf("    network peers\n");
+    printf("    status\n");
+    printf("    help\n\n");
 }
 
 int main(int argc, char** argv) {
@@ -397,11 +581,17 @@ int main(int argc, char** argv) {
     if (cmd == "start") {
         const char* listen = nullptr;
         const char* bootstrap = nullptr;
-        for (int i = 2; i < argc - 1; ++i) {
-            if (strcmp(argv[i], "--listen") == 0) listen = argv[++i];
-            if (strcmp(argv[i], "--bootstrap") == 0) bootstrap = argv[++i];
+        bool enable_tor = false;
+        uint16_t tor_socks = 9050;
+        uint16_t tor_ctrl = 9051;
+        for (int i = 2; i < argc; ++i) {
+            if (strcmp(argv[i], "--listen") == 0 && i + 1 < argc) listen = argv[++i];
+            else if (strcmp(argv[i], "--bootstrap") == 0 && i + 1 < argc) bootstrap = argv[++i];
+            else if (strcmp(argv[i], "--tor") == 0) enable_tor = true;
+            else if (strcmp(argv[i], "--tor-socks-port") == 0 && i + 1 < argc) tor_socks = (uint16_t)atoi(argv[++i]);
+            else if (strcmp(argv[i], "--tor-control-port") == 0 && i + 1 < argc) tor_ctrl = (uint16_t)atoi(argv[++i]);
         }
-        handle_start(listen, bootstrap);
+        handle_start(listen, bootstrap, enable_tor, tor_socks, tor_ctrl);
     }
     else if (cmd == "profile" && argc > 2) {
         std::string action = argv[2];
@@ -524,6 +714,27 @@ int main(int argc, char** argv) {
                 if (strcmp(argv[i], "--user") == 0) { user = argv[++i]; break; }
             handle_guestbook_show(user);
         }
+        else print_usage(argv[0]);
+    }
+    else if (cmd == "video" && argc > 2) {
+        std::string action = argv[2];
+        if (action == "upload") {
+            const char* video_id = nullptr;
+            uint64_t duration = 0;
+            uint32_t width = 0, height = 0, codec = 0, chunks = 1;
+            uint64_t bitrate = 0;
+            for (int i = 3; i < argc - 1; ++i) {
+                if (strcmp(argv[i], "--video-id") == 0 && i + 1 < argc) video_id = argv[++i];
+                else if (strcmp(argv[i], "--duration") == 0 && i + 1 < argc) duration = (uint64_t)atoll(argv[++i]);
+                else if (strcmp(argv[i], "--width") == 0 && i + 1 < argc) width = (uint32_t)atoi(argv[++i]);
+                else if (strcmp(argv[i], "--height") == 0 && i + 1 < argc) height = (uint32_t)atoi(argv[++i]);
+                else if (strcmp(argv[i], "--codec") == 0 && i + 1 < argc) codec = (uint32_t)atoi(argv[++i]);
+                else if (strcmp(argv[i], "--bitrate") == 0 && i + 1 < argc) bitrate = (uint64_t)atoll(argv[++i]);
+                else if (strcmp(argv[i], "--chunks") == 0 && i + 1 < argc) chunks = (uint32_t)atoi(argv[++i]);
+            }
+            handle_video_upload(video_id, duration, width, height, codec, bitrate, chunks);
+        }
+        else if (action == "manifest") handle_video_manifest();
         else print_usage(argv[0]);
     }
     else if (cmd == "network" && argc > 2) {

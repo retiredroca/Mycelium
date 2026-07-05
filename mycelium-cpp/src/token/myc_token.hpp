@@ -147,6 +147,18 @@ struct RewardPool {
         return reward;
     }
 
+    uint64_t claim_video_hosting(uint64_t storage_gb, uint64_t mbps_served,
+                                  uint64_t total_gb, uint64_t total_mbps) {
+        if (total_gb == 0 || total_mbps == 0) return 0;
+        uint64_t storage_share = hosting_rewards * storage_gb / total_gb;
+        uint64_t bw_share = hosting_rewards * mbps_served / total_mbps;
+        uint64_t reward = storage_share + bw_share;
+        reward = reward > hosting_rewards ? hosting_rewards : reward;
+        hosting_rewards -= reward;
+        total_distributed += reward;
+        return reward;
+    }
+
     uint64_t claim_creation(double engagement_score, bool is_permanent) {
         uint64_t reward = 0;
         if (engagement_score >= 100.0) reward += 10;

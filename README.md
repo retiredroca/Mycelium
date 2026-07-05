@@ -1,6 +1,6 @@
-# Mycelium Protocol
+# MyTube Protocol
 
-**A Decentralized Social Network with Quantum-Resistant Security and Social Mining**
+**A YouTube-Inspired P2P Video Network with Quantum-Resistant Security and Social Mining**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
@@ -8,7 +8,7 @@
 
 ## Overview
 
-Mycelium is a decentralized social network where users own their data, host content on peer nodes for fees, and earn through "Social Mining" — a native token reward system for network participation.
+MyTube is a decentralized peer-to-peer video network — like YouTube, but without the central server. Users own their data, host video chunks on peer nodes for fees, and earn through "Social Mining" — a native token reward system for network participation.
 
 ### Design Philosophy
 
@@ -20,6 +20,8 @@ Every module is a single `static inline` header. The entire project builds in se
 
 - **User-Owned Data**: Posts and media are encrypted with user-controlled keys
 - **Peer Hosting**: Friends and trusted nodes host your data for token rewards
+- **Video Hosting**: Encrypted chunked video with bandwidth-weighted peer selection and streaming slot reservations
+- **Tor / Onion Routing**: Run nodes over Tor hidden services with auto-derived `.onion` addresses via Ed25519 key pairs
 - **Social Mining**: Earn tokens by relaying data, hosting content, and creating engagement
 - **Quantum-Resistant**: Hybrid cryptography (X25519 + Kyber-768 + AES-256-GCM)
 - **Proof of Engagement**: Content visibility extends based on network interaction
@@ -31,6 +33,12 @@ Every module is a single `static inline` header. The entire project builds in se
 ┌─────────────────────────────────────────────────────────────┐
 │                      CLIENT LAYER                           │
 │         C++ CLI  │  (future: WASM / Native)                 │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────┐
+│                    VIDEO / MEDIA LAYER                      │
+│  Chunked Encryption  │  Streaming Slots  │  Bandwidth Mgmt  │
+│  Codec Metadata  │  Per-Chunk CIDs  │  Thumbnail CIDs      │
 └───────────────────────────┬─────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -60,8 +68,8 @@ Every module is a single `static inline` header. The entire project builds in se
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/mycelium.git
-cd mycelium/mycelium-cpp
+git clone https://github.com/your-org/mytube.git
+cd mytube
 
 # Build the project
 cmake -B build
@@ -81,38 +89,47 @@ cmake --build build --config Release
 ./build/Release/mycelium profile create --display-name "Alice" --username alice
 
 # Create a post
-./build/Release/mycelium post --content "Hello, Mycelium Network!"
+./build/Release/mycelium post --content "Hello, MyTube Network!"
 
 # Check wallet balance
 ./build/Release/mycelium wallet balance
 
+# Upload a video manifest (simulated)
+./build/Release/mycelium video upload --video-id "my-video" --duration 120000 --width 1920 --height 1080 --codec 0 --bitrate 8000000 --chunks 4
+
+# View video manifest details
+./build/Release/mycelium video manifest
+
 # View network status
 ./build/Release/mycelium status
+
+# Start a node with Tor hidden service (requires Tor daemon)
+./build/Release/mycelium start --listen /ip4/0.0.0.0/tcp/4001 --tor --tor-socks-port 9050 --tor-control-port 9051
 ```
 
-## Post Lifecycle
+## Video & Post Lifecycle
 
-Posts in Mycelium have a Time-To-Live (TTL) that can be extended through engagement:
+Videos and posts on MyTube have a Time-To-Live (TTL) that is extended through viewer engagement — just like trending algorithms on YouTube:
 
 | State | TTL | Extension Mechanism |
 |-------|-----|-------------------|
 | Fresh | 24h | +2h per view, +4h per share |
-| Hyped | 48h+ | +6h per comment, +12h per share |
+| Trending | 48h+ | +6h per comment, +12h per share |
 | Permanent | ∞ | Stake tokens to make permanent |
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                     POST LIFECYCLE                           │
+│                  VIDEO / POST LIFECYCLE                      │
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
-│   Created ──► Fresh (24h TTL)                              │
+│   Uploaded ──► Fresh (24h TTL)                              │
 │                   │                                          │
 │                   ├── View ──► TTL +2h                      │
 │                   ├── Share ──► TTL +4h                     │
 │                   └── Comment ──► TTL +6h                   │
 │                          │                                  │
 │                          ▼                                  │
-│                   Hype (Score ≥ 1000)                        │
+│                Trending (Score ≥ 1000)                       │
 │                          │                                  │
 │                          ├── More engagement                 │
 │                          │                                  │
@@ -128,7 +145,7 @@ Posts in Mycelium have a Time-To-Live (TTL) that can be extended through engagem
 | Category | Allocation | Description |
 |----------|------------|-------------|
 | Relay Rewards | 35% | Data forwarding, gossip propagation |
-| Hosting Rewards | 40% | Authorized peer storage |
+| Hosting Rewards | 40% | Authorized peer storage + video hosting bandwidth multiplier |
 | Creation Rewards | 15% | Hype milestones |
 | Engagement Rewards | 10% | Viewers, sharers, commenters |
 
@@ -138,6 +155,7 @@ Posts in Mycelium have a Time-To-Live (TTL) that can be extended through engagem
 |--------|-----------|--------|
 | Post Permanence | Stake (returnable) | 100-10,000 tokens |
 | High-Bandwidth Hosting | Stake (returnable) | 500-50,000 tokens |
+| Video Streaming Slot | Stake (returnable) | 1,000-100,000 tokens |
 | Verified Identity | Burn (permanent) | 50 tokens |
 | Network Fees | Burn (permanent) | Variable |
 
@@ -182,7 +200,7 @@ The protocol uses **hybrid cryptography** combining:
 ## Project Structure
 
 ```
-mycelium/
+mytube/
 ├── mycelium-cpp/
 │   ├── CMakeLists.txt
 │   └── src/
@@ -208,6 +226,8 @@ mycelium/
 │       │   └── myc_profile_validation.hpp     # Username/bio/URL validation
 │       ├── guestbook/
 │       │   └── myc_guestbook.hpp             # Guestbook entries, approval
+│       ├── media/
+│       │   └── myc_video.hpp                 # VideoMetadata, chunking, codecs
 │       ├── identity/
 │       │   └── myc_identity.hpp              # Username registry, lookup
 │       └── p2p/
@@ -245,7 +265,7 @@ The PQ interfaces (Kyber-768 encapsulate/decapsulate, Dilithium fork/merge) use 
 
 ```bash
 # Build and run
-cd mycelium-cpp
+cd mytube
 cmake -B build && cmake --build build --config Release
 
 # Run any command
@@ -260,7 +280,7 @@ cmake -B build && cmake --build build --config Release
 
 | Phase | Timeline | Goals |
 |-------|----------|-------|
-| **Phase 1** | Current | C++ port, core crypto, CLI, peer table, profile system |
+| **Phase 1** | Current | C++ port, core crypto, CLI, peer table, profile system, video hosting |
 | **Phase 2** | Next | Real TCP/UDP transport, Kademlia DHT, gossip protocol |
 | **Phase 3** | Future | Real liboqs integration (ML-KEM, SLH-DSA), encrypted storage |
 | **Phase 4** | Future | Token integration, staking, governance |

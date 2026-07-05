@@ -1,8 +1,8 @@
-# The Mycelium Protocol - Architecture Documentation
+# MyTube Protocol - Architecture Documentation
 
 ## Overview
 
-The Mycelium Protocol is a decentralized social network built on peer-to-peer technology with native token economics for social mining.
+MyTube is a decentralized peer-to-peer video network built on peer-to-peer technology with native token economics for social mining.
 
 ## System Architecture
 
@@ -333,18 +333,19 @@ flowchart TB
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| **Node Client** | Rust + libp2p | High-performance P2P networking |
-| **Database** | OrbitDB + Helia | Distributed CRDT storage |
-| **Storage Bridge** | Storacha/Filecoin | Long-term archival |
-| **Token Layer** | Solana SVM L2 | Fast, low-cost transactions |
-| **Identity** | Ed25519 + zkLogin | Keyless onboarding |
+| **Node Client** | C++17 (static inline headers) | Zero-dependency P2P networking |
+| **Database** | EncryptedStorageEntry + MerkleProof | Distributed content-addressed storage |
+| **Storage Bridge** | EncryptedDataHandoff + StorageAgreement | Peer-to-peer storage contracts |
+| **Token Layer** | MYCELIUM token (RewardPool) | Social mining rewards |
+| **Identity** | Ed25519 + UsernameRegistry | Key-based identity management |
 | **Consensus** | Proof of Stake | Network security |
+| **Video Hosting** | ChunkedFile + StreamingSlot | P2P video distribution |
 
 ## Roadmap Phases
 
 ```mermaid
 gantt
-    title Mycelium Protocol Development
+    title MyTube Protocol Development
     dateFormat YYYY-MM
     section Phase 1
     P2P Core               :2024-01, 6m
@@ -369,7 +370,7 @@ gantt
 
 ### Cryptographic Design Philosophy
 
-The Mycelium Protocol implements **hybrid cryptography** that combines current-generation algorithms (for compatibility) with post-quantum algorithms (for future-proofing). This approach ensures security against both classical and quantum adversaries.
+MyTube implements **hybrid cryptography** that combines current-generation algorithms (for compatibility) with post-quantum algorithms (for future-proofing). This approach ensures security against both classical and quantum adversaries.
 
 ```mermaid
 flowchart TB
@@ -641,7 +642,7 @@ Phase 3 (Future):   Post-quantum only (when PQ performance improves)
 
 ### Overview
 
-The Mycelium Protocol implements a fully customizable user profile system with privacy-first design. Users own their profile data, which is encrypted and stored in the distributed network.
+MyTube implements a fully customizable user profile system with privacy-first design. Users own their profile data, which is encrypted and stored in the distributed network.
 
 ```mermaid
 flowchart TB
@@ -1127,7 +1128,7 @@ mycelium/
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| P2P Networking | ✅ Implemented | Kademlia + GossipSub v2 |
+| P2P Networking | ✅ Implemented | Peer table, gossip protocol types |
 | Post Lifecycle | ✅ Implemented | TTL, Hype, Permanence |
 | Tokenomics | ✅ Implemented | Emission, staking, rewards |
 | Quantum Encryption | ✅ Implemented | Hybrid X25519+Kyber |
@@ -1135,5 +1136,188 @@ mycelium/
 | Guestbook | ✅ Implemented | Approval-based entries |
 | Social Graph | ✅ Implemented | Follow/follower/block |
 | Identity Registry | ✅ Implemented | DHT username lookup |
-| Storage Integration | 🔄 In Progress | OrbitDB/Helia connection |
-| Solana SVM L2 | 🔄 In Progress | Token contracts |
+| Video Hosting | ✅ Implemented | Chunked encryption, streaming slots, bandwidth-weighted rewards |
+| Storage Integration | 🔄 In Progress | Encrypted data handoff with Merkle proofs |
+| Real P2P Transport | 🔄 In Progress | TCP/UDP socket integration |
+
+---
+
+## Video Hosting Architecture
+
+### Overview
+
+The video hosting subsystem enables P2P distribution of encrypted chunked video content. Videos are split into fixed-size chunks (4 MB default), each with its own CID, Merkle hash, and optional encryption key. Peers advertise `kCapVideoHosting` to indicate they can serve video chunks and reserve streaming bandwidth.
+
+### Chunked Video Structure
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    VIDEO MANIFEST                            │
+├─────────────────────────────────────────────────────────────┤
+│  VideoMetadata                                              │
+│  ├── video_id: string                                       │
+│  ├── codec: H.264 / H.265 / VP9 / AV1                      │
+│  ├── width x height: resolution                             │
+│  ├── duration_ms: playback duration                         │
+│  ├── bitrate_bps: encoding bitrate                          │
+│  ├── thumbnail_cid: preview image                           │
+│  ├── chunk_size_bytes: 4 MB default                         │
+│  └── chunks[]:                                              │
+│      ├── chunk_cid: content-addressed chunk                  │
+│      ├── index: sequential order                            │
+│      ├── byte_offset: position in original file             │
+│      ├── byte_length: chunk size                            │
+│      ├── chunk_hash: SHA-256 of chunk data                  │
+│      └── host_peer_id: which peer stores this chunk         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Streaming Slot Reservation
+
+```mermaid
+sequenceDiagram
+    participant C as Consumer Node
+    participant H as Host Node (kCapVideoHosting)
+    participant G as Gossip Network
+    
+    Note over C: Request video chunks
+    C->>G: kGossipVideoChunkRequest(video_cid, chunk_index)
+    G->>H: Forward request to capable hosts
+    
+    H->>H: Check StreamingSlot availability
+    H->>H: Reserve bandwidth (max_concurrent_streams)
+    
+    alt Slot Available
+        H->>G: kGossipVideoChunkResponse(chunk_cid, encrypted_data)
+        G->>C: Forward response
+    else All Slots Full
+        H->>G: kGossipVideoChunkResponse(reject, reason)
+    end
+```
+
+### Bandwidth-Weighted Rewards
+
+```mermaid
+flowchart LR
+    subgraph VideoRewards["Video Hosting Rewards"]
+        S[Storage Share<br/>GB stored / Total GB]
+        B[Bandwidth Share<br/>Mbps served / Total Mbps]
+        T[Total = Storage + Bandwidth]
+    end
+    
+    S --> T
+    B --> T
+    T --> R[claim_video_hosting reward]
+```
+
+Video hosting rewards use a bandwidth multiplier: peers who serve more Mbps receive a proportionally larger share of the hosting reward pool, incentivizing high-bandwidth nodes.
+
+### Integration Points
+
+| Component | File | Role |
+|-----------|------|------|
+| Video Metadata | `src/media/myc_video.hpp` | VideoMetadata, ChunkEntry, codec enum |
+| Post Attachment | `src/post/myc_post.hpp` | PostContent.video_cid + PostContent.video_meta |
+| Peer Capability | `src/p2p/myc_p2p.hpp` | kCapVideoHosting, max_concurrent_streams |
+| Streaming Slots | `src/storage/myc_storage.hpp` | StreamingSlot bandwidth reservation |
+| Video Gossip | `src/p2p/myc_p2p.hpp` | kGossipVideoChunkRequest/Response |
+| Token Rewards | `src/token/myc_token.hpp` | claim_video_hosting with bandwidth weight |
+| CLI Commands | `src/main.cpp` | `video upload`, `video manifest` |
+| Tor / Onion | `src/crypto/myc_crypto.hpp` | `.onion` address derivation from Ed25519 pubkey |
+| Tor / Onion | `src/p2p/myc_p2p.hpp` | `enable_tor`, `onion_address` in node info |
+| Tor / Onion | `src/main.cpp` | `--tor`, `--tor-socks-port`, `--tor-control-port` CLI flags |
+
+---
+
+## Tor / Onion Integration
+
+### Overview
+
+MyTube supports running nodes over the Tor network using **Tor v3 onion services**. Each node can generate a unique `.onion` address from its Ed25519 key pair, allowing peers to connect via the Tor network for privacy-preserving communication — no central server, no IP exposure.
+
+### Onion Address Derivation
+
+MyTube derives Tor v3 onion addresses entirely from its existing Ed25519 crypto — no external Tor libraries required:
+
+```
+Ed25519 Public Key (32 bytes)
+        │
+        ▼
+SHA-256(".onion checksum" || pubkey || 0x03)
+        │
+        ▼
+checksum[0:2] + pubkey + 0x03  (35 bytes total)
+        │
+        ▼
+base32 encode → "6d25zrjyq3ogsttacnjpu3gvhnyrudsncrrzqd3do5kw32jhpvzzxryd.onion"
+```
+
+The resulting 56-character `.onion` address is stored in `LocalNodeInfo::onion_address` and displayed in the CLI.
+
+### Configuration
+
+| CLI Flag | Type | Default | Description |
+|----------|------|---------|-------------|
+| `--tor` | flag | off | Enable Tor hidden service mode |
+| `--tor-socks-port` | uint16 | 9050 | Tor SOCKS5 proxy port for outbound connections |
+| `--tor-control-port` | uint16 | 9051 | Tor control port for hidden service setup |
+
+### P2pConfig Fields
+
+```cpp
+struct P2pConfig {
+    // ... existing fields ...
+    bool enable_tor = false;
+    uint16_t tor_socks_port = 9050;
+    uint16_t tor_control_port = 9051;
+    std::string onion_service_dir;   // directory to persist the HS private key
+};
+```
+
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph MyTubeNode["MyTube Node (--tor)"]
+        KEY[Ed25519 Keypair]
+        ONION[Onion Address<br/>56-char .onion]
+        SOCKS[SOCKS5 Proxy<br/>localhost:9050]
+        CTRL[Control Port<br/>localhost:9051]
+    end
+    
+    subgraph TorDaemon["Tor Daemon (external)"]
+        HS[Tor Hidden Service]
+        CIRC[Tor Circuits]
+    end
+    
+    KEY -->|derive| ONION
+    ONION -->|register| HS
+    SOCKS -->|outbound| CIRC
+    CTRL -->|setup| HS
+    
+    HS -->|peers connect via| CIRC
+    CIRC -->|anonymous| P2P[P2P Network]
+```
+
+### CLI Example
+
+```bash
+# Start node with Tor enabled
+./build/Release/mycelium start --tor
+
+# Start with custom SOCKS port (e.g., Tor Browser Bundle)
+./build/Release/mycelium start --tor --tor-socks-port 9150
+```
+
+### Zero-Dependency Approach
+
+| Requirement | Implementation | Status |
+|------------|----------------|--------|
+| Ed25519 key generation | `myc_crypto.hpp` — existing `ed25519_keygen` | ✅ Existing |
+| SHA-256 checksum | `myc_crypto.hpp` — existing `sha256` | ✅ Existing |
+| Base32 encoding | `myc_crypto.hpp` — new `base32_encode` | ✅ Added |
+| Onion address derivation | `myc_crypto.hpp` — `onion_address_from_pubkey` | ✅ Added |
+| SOCKS5 proxy client | Real socket code (Phase 2 transport) | 🔄 Planned |
+| Control port protocol | Real socket code (Phase 2 transport) | 🔄 Planned |
+
+The node generates and displays its `.onion` address immediately. Actual SOCKS5 proxy connections and hidden service registration via the control port will be wired when the real TCP transport layer is implemented. Until then, the node advertises its `.onion` address in peer announcements and is ready for privacy-preserving connections.
