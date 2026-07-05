@@ -338,9 +338,43 @@ static inline void handle_wallet_create() {
     random_bytes(pk.data(), 32);
     g_state.wallet = Wallet{};
     memcpy(g_state.wallet.public_key.data(), pk.data(), 32);
-    g_state.wallet.receive(1'000'000);
     auto addr = base64_encode(pk.data(), 16);
     printf("  Wallet created: MYT%s\n", addr.c_str());
+}
+
+static inline void handle_mine() {
+    if (g_state.wallet.public_key == std::array<uint8_t, 32>{}) {
+        std::array<uint8_t, 32> pk;
+        random_bytes(pk.data(), 32);
+        g_state.wallet = Wallet{};
+        memcpy(g_state.wallet.public_key.data(), pk.data(), 32);
+        auto addr = base64_encode(pk.data(), 16);
+        printf("  Created wallet: MYT%s\n", addr.c_str());
+    }
+    uint64_t epoch = g_state.tokenomics.current_epoch;
+    uint64_t reward_amount = mining_block_reward(epoch);
+    uint32_t diff = mining_difficulty_bits(epoch);
+
+    printf("  Mining at epoch %llu... (difficulty: %u bits, reward: %llu MYTUBE)\n",
+           (unsigned long long)epoch, diff, (unsigned long long)reward_amount);
+
+    uint64_t nonce = mining_search(g_state.wallet.public_key, epoch, kMiningMaxNoncePerAttempt);
+
+    if (nonce == UINT64_MAX) {
+        printf("  No block found in %llu attempts.\n", (unsigned long long)kMiningMaxNoncePerAttempt);
+        return;
+    }
+
+    if (!mint_to_wallet(g_state.tokenomics, g_state.wallet, reward_amount)) {
+        printf("  Supply exhausted — cannot mint more tokens.\n");
+        return;
+    }
+    g_state.tokenomics.apply_disinflation();
+
+    char bal[32];
+    snprintf(bal, sizeof(bal), "%llu MYTUBE", (unsigned long long)g_state.wallet.balance);
+    printf("  \xF0\x9F\x9B\x8F Block found! Nonce: %llu, Reward: %llu MYTUBE, Balance: %s\n",
+           (unsigned long long)nonce, (unsigned long long)reward_amount, bal);
 }
 
 static inline void handle_wallet_balance() {
@@ -495,6 +529,17 @@ static inline void handle_status() {
     char supply[64];
     snprintf(supply, sizeof(supply), "%llu MYTUBE", (unsigned long long)g_state.tokenomics.total_supply);
     print_yt_line("Supply", supply);
+    char minted[64];
+    snprintf(minted, sizeof(minted), "%llu MYTUBE", (unsigned long long)g_state.tokenomics.minted_supply);
+    print_yt_line("Minted", minted);
+    char reward[32];
+    snprintf(reward, sizeof(reward), "%llu MYTUBE",
+             (unsigned long long)mining_block_reward(g_state.tokenomics.current_epoch));
+    print_yt_line("Block Reward", reward);
+    char diff[16];
+    snprintf(diff, sizeof(diff), "%u bits",
+             mining_difficulty_bits(g_state.tokenomics.current_epoch));
+    print_yt_line("Difficulty", diff);
     char epoch[32];
     snprintf(epoch, sizeof(epoch), "%llu", (unsigned long long)g_state.tokenomics.current_epoch);
     print_yt_line("Epoch", epoch);
@@ -616,6 +661,7 @@ static inline void print_usage(const char* prog) {
     printf("    wallet create\n");
     printf("    wallet balance\n");
     printf("    wallet stake --amount N\n");
+    printf("    mine\n");
     printf("    wallet unstake --amount N\n");
     printf("    wallet send --to ADDR --amount N\n");
     printf("    social follow --user U\n");
@@ -638,6 +684,13 @@ int main(int argc, char** argv) {
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
 #endif
+
+    g_state.tokenomics.minted_supply = 0;
+    g_state.tokenomics.staked_supply = 0;
+    g_state.tokenomics.burned_supply = 0;
+    g_state.tokenomics.current_epoch = 0;
+    g_state.tokenomics.annual_inflation_bps = 800;
+    g_state.tokenomics.total_supply = kTotalSupply;
 
     if (argc < 2) { print_usage(argv[0]); return 1; }
 
@@ -745,6 +798,9 @@ int main(int argc, char** argv) {
             handle_wallet_send(to, amt);
         }
         else print_usage(argv[0]);
+    }
+    else if (cmd == "mine") {
+        handle_mine();
     }
     else if (cmd == "social" && argc > 2) {
         std::string action = argv[2];

@@ -11,21 +11,27 @@ static inline constexpr uint8_t kDecimals = 6;
 static inline constexpr uint64_t kMinStakeAmount = 100;
 static inline constexpr uint64_t kPermanentStakeMin = 100;
 
+static inline constexpr uint64_t kMiningBaseReward = 50;        // per block
+static inline constexpr uint64_t kMiningHalvingEpochs = 210'000; // reward halves every N epochs
+static inline constexpr uint32_t kMiningDiffStart = 16;           // leading zero bits at epoch 0
+static inline constexpr uint32_t kMiningDiffInterval = 10'000;    // +1 bit every N epochs
+static inline constexpr uint32_t kMiningDiffCap = 28;
+static inline constexpr uint64_t kMiningMaxNoncePerAttempt = 2'000'000;
+
 struct Tokenomics {
     uint64_t total_supply = kTotalSupply;
-    uint64_t circulating_supply = kTotalSupply;
+    uint64_t minted_supply = 0;
     uint64_t staked_supply = 0;
     uint64_t burned_supply = 0;
-    uint32_t annual_inflation_bps = 800; // 8% in basis points
+    uint32_t annual_inflation_bps = 800;
     uint64_t current_epoch = 0;
 
     uint64_t calc_circulating() const {
-        return total_supply - staked_supply - burned_supply;
+        return minted_supply - staked_supply - burned_supply;
     }
 
     uint64_t calc_epoch_reward(uint64_t validator_stake, uint64_t total_stake) const {
         if (total_stake == 0) return 0;
-        // annual inflation / 365 * (validator_stake / total_stake)
         uint64_t annual_reward = (uint64_t)((uint64_t)total_supply * (uint64_t)annual_inflation_bps / 10000);
         uint64_t daily = annual_reward / 365;
         return daily * validator_stake / total_stake;
@@ -33,8 +39,8 @@ struct Tokenomics {
 
     void apply_disinflation() {
         ++current_epoch;
-        if (annual_inflation_bps > 150) { // floor at 1.5%
-            annual_inflation_bps = (uint32_t)(annual_inflation_bps * 85 / 100); // 15% reduction
+        if (annual_inflation_bps > 150) {
+            annual_inflation_bps = (uint32_t)(annual_inflation_bps * 85 / 100);
             if (annual_inflation_bps < 150) annual_inflation_bps = 150;
         }
     }
@@ -98,6 +104,55 @@ struct Wallet {
     }
 };
 
+static inline bool mint_to_wallet(Tokenomics& t, Wallet& w, uint64_t amount) {
+    if (t.minted_supply + amount > t.total_supply) return false;
+    t.minted_supply += amount;
+    w.receive(amount);
+    return true;
+}
+
+static inline uint64_t mining_block_reward(uint64_t epoch) {
+    uint64_t halvings = epoch / kMiningHalvingEpochs;
+    uint64_t reward = kMiningBaseReward;
+    for (uint64_t i = 0; i < halvings; ++i) {
+        reward /= 2;
+        if (reward == 0) return 1;
+    }
+    return reward;
+}
+
+static inline uint32_t mining_difficulty_bits(uint64_t epoch) {
+    uint32_t bits = kMiningDiffStart + (uint32_t)(epoch / kMiningDiffInterval);
+    return bits > kMiningDiffCap ? kMiningDiffCap : bits;
+}
+
+static inline uint64_t mining_search(const std::array<uint8_t, 32>& pubkey,
+                                      uint64_t epoch, uint64_t max_nonce) {
+    uint32_t target_bits = mining_difficulty_bits(epoch);
+    uint64_t reward = mining_block_reward(epoch);
+    if (reward == 0) return UINT64_MAX;
+
+    for (uint64_t n = 0; n < max_nonce; ++n) {
+        Sha256Ctx ctx;
+        sha256_init(&ctx);
+        sha256_update(&ctx, pubkey.data(), 32);
+        sha256_update(&ctx, (const uint8_t*)&n, sizeof(n));
+        sha256_update(&ctx, (const uint8_t*)&epoch, sizeof(epoch));
+        std::array<uint8_t, 32> hash;
+        sha256_final(&ctx, hash.data());
+
+        uint32_t leading = 0;
+        for (int i = 0; i < 32; ++i) {
+            if (hash[i] == 0) { leading += 8; continue; }
+            uint8_t b = hash[i];
+            while ((b & 0x80) == 0) { ++leading; b <<= 1; }
+            break;
+        }
+        if (leading >= target_bits) return n;
+    }
+    return UINT64_MAX;
+}
+
 struct StakePosition {
     std::string validator_id;
     uint64_t amount = 0;
@@ -126,9 +181,10 @@ struct RewardPool {
     uint64_t total_distributed = 0;
 
     void init(uint64_t initial_supply) {
-        uint64_t annual = initial_supply / 100;
-        uint64_t per_cat = annual / 4;
-        relay_rewards = hosting_rewards = creation_rewards = engagement_rewards = per_cat;
+        relay_rewards = initial_supply * 35 / 100;
+        hosting_rewards = initial_supply * 40 / 100;
+        creation_rewards = initial_supply * 15 / 100;
+        engagement_rewards = initial_supply * 10 / 100;
     }
 
     uint64_t claim_relay(uint64_t bytes_relayed, uint64_t total_bytes) {
