@@ -28,7 +28,7 @@ environment for everyone. We do not tolerate harassment or discrimination of any
 
 3. **Clone and Build**
    ```bash
-    git clone https://github.com/your-org/mycelium.git
+    git clone https://github.com/retiredroca/Mycelium.git
     cd mycelium
    cargo build --release
    ```

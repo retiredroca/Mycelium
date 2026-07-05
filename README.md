@@ -68,7 +68,7 @@ Every module is a single `static inline` header. The entire project builds in se
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/mytube.git
+git clone https://github.com/retiredroca/Mycelium.git
 cd mytube
 
 # Build the project
