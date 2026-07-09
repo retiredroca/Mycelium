@@ -21,7 +21,9 @@ Every module is a single `static inline` header. The entire project builds in se
 - **User-Owned Data**: Posts and media are encrypted with user-controlled keys
 - **Peer Hosting**: Friends and trusted nodes host your data for token rewards
 - **Video Hosting**: Encrypted chunked video with bandwidth-weighted peer selection and streaming slot reservations
-- **Embedded Web UI**: YouTube-style landing page served via built-in HTTP listener (`--http-port`)
+- **Terminal UI**: Full TUI dashboard with wallet management, mining controls, and live console (press `S` to start a node, `M` to mine)
+- **Interactive Web Dashboard**: REST API + JS dashboard with live status, wallet create/restore, mining, token sends, and auto-refreshing log
+- **JSON Config File**: All settings via `mycelium.json`, loaded with `--config` flag
 - **Tor / Onion Routing**: Run nodes over Tor hidden services with auto-derived `.onion` addresses via Ed25519 key pairs
 - **Proof-of-Work Mining**: Mine MYTUBE tokens via SHA-256 hash brute-force (placeholder until Social Mining via P2P transport arrives)
 - **Social Mining**: Earn tokens by relaying data, hosting content, and creating engagement
@@ -141,6 +143,15 @@ Example: `feat: add mining stats; buildRC`
 
 # Start with both web UI and Tor
 ./build/Release/mycelium start --http-port 8080 --tor
+
+# Use config file instead of CLI flags
+./build/Release/mycelium start --config ./mycelium.json
+
+# Generate a default config file
+./build/Release/mycelium config generate --path ./mycelium.json
+
+# View current effective config
+./build/Release/mycelium config show
 ```
 
 ## Video & Post Lifecycle
@@ -215,7 +226,7 @@ The mined supply is distributed through Social Mining pools using the reward poo
 
 ## Web UI
 
-MyTube ships with a **YouTube-style embedded web interface** served directly from the binary. No external HTTP server, no static files — the entire HTML/CSS landing page is compiled into `myc_web.hpp` as a raw string literal and served via a built-in synchronous TCP listener.
+MyTube ships with an **interactive embedded web dashboard** served directly from the binary. It provides a REST API (JSON) and a JavaScript auto-refresh client for live node status, wallet creation/restore, mining, token sends, and log output — all compiled into `myc_web.hpp` as raw string literals and served via a built-in synchronous TCP listener.
 
 ```bash
 # Start with web UI on port 8080
@@ -224,6 +235,8 @@ MyTube ships with a **YouTube-style embedded web interface** served directly fro
 ```
 
 When combined with `--tor`, the node also displays the `.onion` web URL for privacy-preserving remote access.
+
+An **interactive Terminal UI** is also available (`mycelium no-gui` or `mycelium start`) with full keyboard-driven wallet, mining, and console views.
 
 ## Security
 
@@ -270,7 +283,9 @@ mytube/
 ├── mycelium-cpp/
 │   ├── CMakeLists.txt
 │   └── src/
-│       ├── main.cpp                          # CLI application
+│       ├── main.cpp                          # CLI application (config, start, wallet, etc.)
+│       ├── config/
+│       │   └── myc_config.hpp                # JSON config loading, MyceliumConfig struct
 │       ├── crypto/
 │       │   └── myc_crypto.hpp                # All crypto: SHA-256, HMAC, HKDF,
 │       │                                       X25519, Ed25519, AES-256-GCM,
@@ -343,14 +358,16 @@ cmake -B build && cmake --build build --config Release
 ./build/Release/mycelium wallet balance
 ./build/Release/mycelium mine
 ./build/Release/mycelium profile create --display-name "Alice" --username alice
+./build/Release/mycelium config show
+./build/Release/mycelium config generate --path ./mycelium.json
 ```
 
 ## Roadmap
 
 | Phase | Timeline | Goals |
 |-------|----------|-------|
-| **Phase 1** | Current | C++ port, core crypto, CLI, peer table, profile system, video hosting, embedded web UI, PoW mining |
-| **Phase 2** | Next | Real TCP/UDP transport, Kademlia DHT, gossip protocol |
+| **Phase 1** | ✅ Completed | C++ port, core crypto, CLI, TUI, peer table, profile system, video hosting, embedded web UI, PoW mining, config system |
+| **Phase 2** | Current | Real TCP/UDP transport, Kademlia DHT, gossip protocol |
 | **Phase 3** | Future | Real liboqs integration (ML-KEM, SLH-DSA), encrypted storage |
 | **Phase 4** | Future | Token integration, staking, governance |
 

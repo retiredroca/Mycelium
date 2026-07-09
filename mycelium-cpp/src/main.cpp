@@ -17,7 +17,7 @@
 #include "identity/myc_identity.hpp"
 #include "p2p/myc_p2p.hpp"
 #include "media/myc_video.hpp"
-#include "web/myc_web.hpp"
+#include "config/myc_config.hpp"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -39,11 +39,14 @@ struct AppState {
     bool node_running = false;
     VideoMetadata current_video;
     std::array<uint8_t, 32> private_key = {};
+    MyceliumConfig config;
 };
 
 static AppState g_state;
 
+#include "web/myc_web.hpp"
 #include "gui/myc_gui.hpp"
+#include "tui/myc_tui.hpp"
 
 // ============================================================
 // ANSI color helpers (YouTube red)
@@ -126,23 +129,61 @@ static inline void print_yt_sep() {
 }
 
 // ============================================================
+// Config handlers
+// ============================================================
+static inline void handle_config_generate(const char* path) {
+    if (!path) path = "./mycelium.json";
+    if (save_config_file(path, g_state.config)) {
+        printf("  Default config saved to: %s\n", path);
+        printf("  Edit it and use: mycelium start --config %s\n", path);
+    } else {
+        printf("  Error: could not write to %s\n", path);
+    }
+}
+
+static inline void handle_config_show() {
+    printf("%s\n", config_string(g_state.config).c_str());
+}
+
+static inline void handle_config_load(const char* path) {
+    if (!path) return;
+    if (load_config_file(path, g_state.config)) {
+        printf("  Config loaded from: %s\n", path);
+    } else {
+        printf("  Warning: could not load config from %s (using defaults)\n", path);
+    }
+}
+
+static inline void handle_start_from_config() {
+    auto& cfg = g_state.config;
+    P2pConfig p2p = cfg.to_p2p_config();
+    g_state.node = new MyceliumNode(MyceliumNode::create(p2p));
+    g_state.node->init_storage(p2p.storage);
+    g_state.node->load_chain(g_state.tokenomics, g_state.wallet);
+    g_state.node_running = true;
+}
+
+// ============================================================
 // Command handlers
 // ============================================================
 static inline void handle_start(const char* listen_addr, const char* bootstrap,
-                                 bool enable_tor, uint16_t tor_socks, uint16_t tor_ctrl,
+                                 int enable_tor, uint16_t tor_socks, uint16_t tor_ctrl,
                                  uint16_t http_port) {
-    P2pConfig cfg;
-    cfg.listen_addresses.push_back(listen_addr ? listen_addr : "/ip4/0.0.0.0/tcp/0");
-    if (bootstrap) cfg.bootstrap_nodes.push_back(bootstrap);
-    cfg.capabilities.push_back({kCapFull});
-    cfg.enable_tor = enable_tor;
-    cfg.tor_socks_port = tor_socks;
-    cfg.tor_control_port = tor_ctrl;
+    // Apply CLI overrides on top of config (only when explicitly set)
+    if (listen_addr) g_state.config.listen_addr = listen_addr;
+    if (bootstrap) {
+        g_state.config.bootstrap_nodes.clear();
+        g_state.config.bootstrap_nodes.push_back(bootstrap);
+    }
+    if (enable_tor >= 0) g_state.config.enable_tor = (enable_tor > 0);
+    if (tor_socks > 0) g_state.config.tor_socks_port = tor_socks;
+    if (tor_ctrl > 0) g_state.config.tor_control_port = tor_ctrl;
+    if (http_port > 0) {
+        g_state.config.enable_http = true;
+        g_state.config.http_port = http_port;
+    }
 
-    g_state.node = new MyceliumNode(MyceliumNode::create(cfg));
-    g_state.node->init_storage(cfg.storage);
-    g_state.node->load_chain(g_state.tokenomics, g_state.wallet);
-    g_state.node_running = true;
+    handle_start_from_config();
 
     print_yt_header("\xF0\x9F\x94\x8C", "MYTUBE NODE STARTED");
     print_yt_line("Peer ID", g_state.node->local_peer_id().c_str());
@@ -161,9 +202,9 @@ static inline void handle_start(const char* listen_addr, const char* bootstrap,
     } else {
         print_yt_line("Tor", "Disabled");
     }
-    if (http_port > 0) {
+    if (g_state.config.enable_http && g_state.config.http_port > 0) {
         char port_str[16];
-        snprintf(port_str, sizeof(port_str), "%u", http_port);
+        snprintf(port_str, sizeof(port_str), "%u", g_state.config.http_port);
         print_yt_line("Web UI", port_str);
         if (!g_state.node->local_info.onion_address.empty()) {
             std::string onion_url = "http://" + g_state.node->local_info.onion_address + ".onion";
@@ -172,8 +213,9 @@ static inline void handle_start(const char* listen_addr, const char* bootstrap,
     }
     print_yt_sep();
 
-    if (http_port > 0) {
-        printf("\n  Starting HTTP server on port %u...\n", http_port);
+    if (g_state.config.enable_http && g_state.config.http_port > 0) {
+        uint16_t port = g_state.config.http_port;
+        printf("\n  Starting HTTP server on port %u...\n", port);
 
 #ifdef _WIN32
         SOCKET server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -183,15 +225,15 @@ static inline void handle_start(const char* listen_addr, const char* bootstrap,
         }
         struct sockaddr_in addr;
         addr.sin_family = AF_INET;
-        addr.sin_port = htons(http_port);
+        addr.sin_port = htons(port);
         addr.sin_addr.s_addr = INADDR_ANY;
         if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-            printf("  Error: bind() failed (port %u in use?)\n", http_port);
+            printf("  Error: bind() failed (port %u in use?)\n", port);
             closesocket(server_fd);
             return;
         }
         listen(server_fd, SOMAXCONN);
-        printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", http_port);
+        printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", port);
         printf("  Press Ctrl+C to stop.\n\n");
 
         while (g_state.node_running) {
@@ -208,15 +250,15 @@ static inline void handle_start(const char* listen_addr, const char* bootstrap,
         }
         struct sockaddr_in addr;
         addr.sin_family = AF_INET;
-        addr.sin_port = htons(http_port);
+        addr.sin_port = htons(port);
         addr.sin_addr.s_addr = INADDR_ANY;
         if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            printf("  Error: bind() failed (port %u in use?)\n", http_port);
+            printf("  Error: bind() failed (port %u in use?)\n", port);
             close(server_fd);
             return;
         }
         listen(server_fd, SOMAXCONN);
-        printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", http_port);
+        printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", port);
         printf("  Press Ctrl+C to stop.\n\n");
 
         while (g_state.node_running) {
@@ -401,9 +443,9 @@ static inline void handle_wallet_create() {
     memset(confirm, 0, sizeof(confirm));
 }
 
-static inline void handle_wallet_restore(int argc, char** argv) {
+static inline void handle_wallet_restore(int argc, char** argv, int cmd_idx) {
     std::vector<std::string> words;
-    for (int i = 3; i < argc; ++i) {
+    for (int i = cmd_idx + 2; i < argc; ++i) {
         if (argv[i][0] == '-') break;
         words.push_back(argv[i]);
     }
@@ -460,13 +502,7 @@ static inline void handle_mine() {
     if (!g_state.node) {
         printf("  No node running. Use 'start' first.\n");
         // Create a throwaway node for mining
-        P2pConfig cfg;
-        cfg.listen_addresses.push_back("/ip4/0.0.0.0/tcp/0");
-        cfg.capabilities.push_back({kCapFull});
-        cfg.storage.data_dir = "./data";
-        g_state.node = new MyceliumNode(MyceliumNode::create(cfg));
-        g_state.node->init_storage(cfg.storage);
-        g_state.node->load_chain(g_state.tokenomics, g_state.wallet);
+        handle_start_from_config();
     }
 
     uint64_t epoch = g_state.tokenomics.current_epoch;
@@ -479,10 +515,10 @@ static inline void handle_mine() {
 
     bool found = g_state.node->mine_block(
         g_state.tokenomics, g_state.wallet,
-        g_state.private_key, kMiningMaxNoncePerAttempt);
+        g_state.private_key, g_state.config.mining_max_nonce);
 
     if (!found) {
-        printf("  No block found in %llu attempts.\n", (unsigned long long)kMiningMaxNoncePerAttempt);
+        printf("  No block found in %llu attempts.\n", (unsigned long long)g_state.config.mining_max_nonce);
         return;
     }
 
@@ -789,6 +825,9 @@ static inline void handle_video_manifest() {
 }
 
 // ============================================================
+// Config handlers
+// ============================================================
+// ============================================================
 // Simple arg parser
 // ============================================================
 static inline void print_usage(const char* prog) {
@@ -798,7 +837,7 @@ static inline void print_usage(const char* prog) {
     printf("  A YouTube-like P2P video network\n\n");
     printf("  Usage: %s <command> [args]\n\n", prog);
     printf("  Commands:\n");
-    printf("    start [--listen ADDR] [--bootstrap ADDR] [--tor] [--tor-socks-port PORT] [--tor-control-port PORT] [--http-port PORT]\n");
+    printf("    start [--config FILE] [--listen ADDR] [--bootstrap ADDR] [--tor] [--tor-socks-port PORT] [--tor-control-port PORT] [--http-port PORT]\n");
     printf("    wallet create\n    wallet restore <24 words>\n    wallet balance\n    wallet stake --amount N\n    wallet unstake --amount N\n    wallet send --to ADDR --amount N\n");
     printf("    profile create --display-name NAME [--username USER]\n");
     printf("    profile show [--user USER]\n");
@@ -810,7 +849,10 @@ static inline void print_usage(const char* prog) {
     printf("    post --content TEXT\n");
     printf("    feed [--limit N]\n");
     printf("    mine\n");
-    printf("    gui\n");
+    printf("    gui [--config FILE]\n");
+    printf("    tui [--config FILE] [--http-port PORT]\n");
+    printf("    config generate [--path FILE]\n");
+    printf("    config show\n");
     printf("    social follow --user U\n");
     printf("    social unfollow --user U\n");
     printf("    social block --user U\n");
@@ -839,9 +881,31 @@ int main(int argc, char** argv) {
     g_state.tokenomics.annual_inflation_bps = 800;
     g_state.tokenomics.total_supply = kTotalSupply;
 
+    // Parse --config early (before command dispatch)
+    const char* config_path = nullptr;
+    for (int i = 1; i < argc; ++i) {
+        if ((strcmp(argv[i], "--config") == 0 || strcmp(argv[i], "-c") == 0) && i + 1 < argc) {
+            config_path = argv[++i];
+            break;
+        }
+    }
+    if (config_path) handle_config_load(config_path);
+
     if (argc < 2) { print_usage(argv[0]); return 1; }
 
-    std::string cmd = argv[1];
+    // Find the first non-flag argument (skip --config, -c, etc.)
+    std::string cmd;
+    int cmd_idx = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i][0] == '-') {
+            if ((strcmp(argv[i], "--config") == 0 || strcmp(argv[i], "-c") == 0) && i + 1 < argc) ++i;
+            continue;
+        }
+        cmd = argv[i];
+        cmd_idx = i;
+        break;
+    }
+    if (cmd.empty()) { print_usage(argv[0]); return 1; }
 
     if (cmd == "help" || cmd == "--help") { print_usage(argv[0]); return 0; }
 
@@ -852,28 +916,57 @@ int main(int argc, char** argv) {
         return gui_run();
     }
 
+    if (cmd == "tui") {
+        uint16_t http_port = 0;
+        for (int i = cmd_idx + 1; i < argc; ++i) {
+            if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) { if (!config_path) handle_config_load(argv[++i]); else ++i; }
+            else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) { if (!config_path) handle_config_load(argv[++i]); else ++i; }
+            else if (strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) http_port = (uint16_t)atoi(argv[++i]);
+        }
+        if (http_port == 0 && g_state.config.enable_http)
+            http_port = g_state.config.http_port;
+        return tui_run(http_port);
+    }
+
+    if (cmd == "config") {
+        if (cmd_idx + 1 >= argc) { print_usage(argv[0]); return 1; }
+        std::string action = argv[cmd_idx + 1];
+        if (action == "generate") {
+            const char* path = nullptr;
+            for (int i = cmd_idx + 2; i < argc - 1; ++i)
+                if (strcmp(argv[i], "--path") == 0) { path = argv[++i]; break; }
+            handle_config_generate(path);
+        } else if (action == "show") {
+            handle_config_show();
+        } else {
+            print_usage(argv[0]);
+        }
+        return 0;
+    }
+
     if (cmd == "start") {
         const char* listen = nullptr;
         const char* bootstrap = nullptr;
-        bool enable_tor = false;
-        uint16_t tor_socks = 9050;
-        uint16_t tor_ctrl = 9051;
+        int enable_tor = -1; // -1 = not set, use config default
+        uint16_t tor_socks = 0;
+        uint16_t tor_ctrl = 0;
         uint16_t http_port = 0;
-        for (int i = 2; i < argc; ++i) {
+        for (int i = cmd_idx + 1; i < argc; ++i) {
             if (strcmp(argv[i], "--listen") == 0 && i + 1 < argc) listen = argv[++i];
             else if (strcmp(argv[i], "--bootstrap") == 0 && i + 1 < argc) bootstrap = argv[++i];
-            else if (strcmp(argv[i], "--tor") == 0) enable_tor = true;
+            else if (strcmp(argv[i], "--tor") == 0) enable_tor = 1;
             else if (strcmp(argv[i], "--tor-socks-port") == 0 && i + 1 < argc) tor_socks = (uint16_t)atoi(argv[++i]);
             else if (strcmp(argv[i], "--tor-control-port") == 0 && i + 1 < argc) tor_ctrl = (uint16_t)atoi(argv[++i]);
             else if (strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) http_port = (uint16_t)atoi(argv[++i]);
         }
         handle_start(listen, bootstrap, enable_tor, tor_socks, tor_ctrl, http_port);
     }
-    else if (cmd == "profile" && argc > 2) {
-        std::string action = argv[2];
+    else if (cmd == "profile") {
+        if (cmd_idx + 1 >= argc) { print_usage(argv[0]); return 1; }
+        std::string action = argv[cmd_idx + 1];
         if (action == "create") {
             const char* dn = nullptr, *un = nullptr;
-            for (int i = 3; i < argc - 1; ++i) {
+            for (int i = cmd_idx + 2; i < argc - 1; ++i) {
                 if (strcmp(argv[i], "--display-name") == 0) dn = argv[++i];
                 if (strcmp(argv[i], "--username") == 0) un = argv[++i];
             }
@@ -881,29 +974,29 @@ int main(int argc, char** argv) {
         }
         else if (action == "show") {
             const char* user = nullptr;
-            for (int i = 3; i < argc - 1; ++i)
+            for (int i = cmd_idx + 2; i < argc - 1; ++i)
                 if (strcmp(argv[i], "--user") == 0) user = argv[++i];
             handle_profile_show(user);
         }
         else if (action == "update") {
             const char* bio = nullptr, *dn = nullptr;
-            for (int i = 3; i < argc - 1; ++i) {
+            for (int i = cmd_idx + 2; i < argc - 1; ++i) {
                 if (strcmp(argv[i], "--bio") == 0) bio = argv[++i];
                 if (strcmp(argv[i], "--display-name") == 0) dn = argv[++i];
             }
             handle_profile_update(bio, dn);
         }
         else if (action == "avatar") {
-            for (int i = 3; i < argc - 1; ++i)
+            for (int i = cmd_idx + 2; i < argc - 1; ++i)
                 if (strcmp(argv[i], "--cid") == 0) { handle_profile_avatar(argv[++i]); break; }
         }
         else if (action == "banner") {
-            for (int i = 3; i < argc - 1; ++i)
+            for (int i = cmd_idx + 2; i < argc - 1; ++i)
                 if (strcmp(argv[i], "--cid") == 0) { handle_profile_banner(argv[++i]); break; }
         }
         else if (action == "link") {
             const char* t = nullptr, *u = nullptr;
-            for (int i = 3; i < argc - 1; ++i) {
+            for (int i = cmd_idx + 2; i < argc - 1; ++i) {
                 if (strcmp(argv[i], "--title") == 0) t = argv[++i];
                 if (strcmp(argv[i], "--url") == 0) u = argv[++i];
             }
@@ -911,7 +1004,7 @@ int main(int argc, char** argv) {
         }
         else if (action == "theme") {
             const char* preset = nullptr, *primary = nullptr;
-            for (int i = 3; i < argc - 1; ++i) {
+            for (int i = cmd_idx + 2; i < argc - 1; ++i) {
                 if (strcmp(argv[i], "--preset") == 0) preset = argv[++i];
                 if (strcmp(argv[i], "--primary") == 0) primary = argv[++i];
             }
@@ -921,32 +1014,33 @@ int main(int argc, char** argv) {
     }
     else if (cmd == "post") {
         const char* content = nullptr;
-        for (int i = 2; i < argc - 1; ++i)
+        for (int i = cmd_idx + 1; i < argc - 1; ++i)
             if (strcmp(argv[i], "--content") == 0) content = argv[++i];
         handle_post_create(content);
     }
     else if (cmd == "feed") {
         int limit = 50;
-        for (int i = 2; i < argc - 1; ++i)
+        for (int i = cmd_idx + 1; i < argc - 1; ++i)
             if (strcmp(argv[i], "--limit") == 0) limit = atoi(argv[++i]);
         handle_feed(limit);
     }
-    else if (cmd == "wallet" && argc > 2) {
-        std::string action = argv[2];
+    else if (cmd == "wallet") {
+        if (cmd_idx + 1 >= argc) { print_usage(argv[0]); return 1; }
+        std::string action = argv[cmd_idx + 1];
         if (action == "create") handle_wallet_create();
-        else if (action == "restore") handle_wallet_restore(argc, argv);
+        else if (action == "restore") handle_wallet_restore(argc, argv, cmd_idx);
         else if (action == "balance") handle_wallet_balance();
         else if (action == "stake") {
-            for (int i = 3; i < argc - 1; ++i)
+            for (int i = cmd_idx + 2; i < argc - 1; ++i)
                 if (strcmp(argv[i], "--amount") == 0) { handle_wallet_stake((uint64_t)atoll(argv[++i])); break; }
         }
         else if (action == "unstake") {
-            for (int i = 3; i < argc - 1; ++i)
+            for (int i = cmd_idx + 2; i < argc - 1; ++i)
                 if (strcmp(argv[i], "--amount") == 0) { handle_wallet_unstake((uint64_t)atoll(argv[++i])); break; }
         }
         else if (action == "send") {
             const char* to = nullptr; uint64_t amt = 0;
-            for (int i = 3; i < argc - 1; ++i) {
+            for (int i = cmd_idx + 2; i < argc - 1; ++i) {
                 if (strcmp(argv[i], "--to") == 0) to = argv[++i];
                 if (strcmp(argv[i], "--amount") == 0) amt = (uint64_t)atoll(argv[++i]);
             }
@@ -957,10 +1051,11 @@ int main(int argc, char** argv) {
     else if (cmd == "mine") {
         handle_mine();
     }
-    else if (cmd == "social" && argc > 2) {
-        std::string action = argv[2];
+    else if (cmd == "social") {
+        if (cmd_idx + 1 >= argc) { print_usage(argv[0]); return 1; }
+        std::string action = argv[cmd_idx + 1];
         const char* user = nullptr;
-        for (int i = 3; i < argc - 1; ++i)
+        for (int i = cmd_idx + 2; i < argc - 1; ++i)
             if (strcmp(argv[i], "--user") == 0) { user = argv[++i]; break; }
         if (action == "follow") handle_social_follow(user);
         else if (action == "unfollow") handle_social_unfollow(user);
@@ -968,20 +1063,22 @@ int main(int argc, char** argv) {
         else if (action == "unblock") handle_social_unblock(user);
         else print_usage(argv[0]);
     }
-    else if (cmd == "identity" && argc > 2) {
-        std::string action = argv[2];
+    else if (cmd == "identity") {
+        if (cmd_idx + 1 >= argc) { print_usage(argv[0]); return 1; }
+        std::string action = argv[cmd_idx + 1];
         const char* username = nullptr;
-        for (int i = 3; i < argc - 1; ++i)
+        for (int i = cmd_idx + 2; i < argc - 1; ++i)
             if (strcmp(argv[i], "--username") == 0) { username = argv[++i]; break; }
         if (action == "register") handle_identity_register(username);
         else if (action == "lookup") handle_identity_lookup(username);
         else print_usage(argv[0]);
     }
-    else if (cmd == "guestbook" && argc > 2) {
-        std::string action = argv[2];
+    else if (cmd == "guestbook") {
+        if (cmd_idx + 1 >= argc) { print_usage(argv[0]); return 1; }
+        std::string action = argv[cmd_idx + 1];
         if (action == "sign") {
             const char* user = nullptr, *msg = nullptr, *name = nullptr;
-            for (int i = 3; i < argc - 1; ++i) {
+            for (int i = cmd_idx + 2; i < argc - 1; ++i) {
                 if (strcmp(argv[i], "--user") == 0) user = argv[++i];
                 if (strcmp(argv[i], "--message") == 0) msg = argv[++i];
                 if (strcmp(argv[i], "--name") == 0) name = argv[++i];
@@ -990,20 +1087,21 @@ int main(int argc, char** argv) {
         }
         else if (action == "show") {
             const char* user = nullptr;
-            for (int i = 3; i < argc - 1; ++i)
+            for (int i = cmd_idx + 2; i < argc - 1; ++i)
                 if (strcmp(argv[i], "--user") == 0) { user = argv[++i]; break; }
             handle_guestbook_show(user);
         }
         else print_usage(argv[0]);
     }
-    else if (cmd == "video" && argc > 2) {
-        std::string action = argv[2];
+    else if (cmd == "video") {
+        if (cmd_idx + 1 >= argc) { print_usage(argv[0]); return 1; }
+        std::string action = argv[cmd_idx + 1];
         if (action == "upload") {
             const char* video_id = nullptr;
             uint64_t duration = 0;
             uint32_t width = 0, height = 0, codec = 0, chunks = 1;
             uint64_t bitrate = 0;
-            for (int i = 3; i < argc - 1; ++i) {
+            for (int i = cmd_idx + 2; i < argc - 1; ++i) {
                 if (strcmp(argv[i], "--video-id") == 0 && i + 1 < argc) video_id = argv[++i];
                 else if (strcmp(argv[i], "--duration") == 0 && i + 1 < argc) duration = (uint64_t)atoll(argv[++i]);
                 else if (strcmp(argv[i], "--width") == 0 && i + 1 < argc) width = (uint32_t)atoi(argv[++i]);
@@ -1017,8 +1115,9 @@ int main(int argc, char** argv) {
         else if (action == "manifest") handle_video_manifest();
         else print_usage(argv[0]);
     }
-    else if (cmd == "network" && argc > 2) {
-        if (strcmp(argv[2], "peers") == 0) handle_network_peers();
+    else if (cmd == "network") {
+        if (cmd_idx + 1 >= argc) { print_usage(argv[0]); return 1; }
+        if (strcmp(argv[cmd_idx + 1], "peers") == 0) handle_network_peers();
         else print_usage(argv[0]);
     }
     else if (cmd == "status") {

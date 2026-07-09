@@ -556,14 +556,15 @@ static LRESULT CALLBACK gui_wndproc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             GetWindowText(g_gui.hwnd_socks_port, buf, sizeof(buf));
             socks_port = (uint16_t)atoi(buf);
 
-            P2pConfig cfg;
-            cfg.listen_addresses.push_back(listen_addr.empty() ? "/ip4/0.0.0.0/tcp/0" : listen_addr.c_str());
-            cfg.capabilities.push_back({kCapFull});
-            cfg.enable_tor = enable_tor;
-            cfg.tor_socks_port = socks_port;
-            cfg.tor_control_port = 9051;
+            P2pConfig p2p = g_state.config.to_p2p_config();
+            p2p.enable_tor = enable_tor;
+            p2p.tor_socks_port = socks_port;
+            if (!listen_addr.empty())
+                p2p.listen_addresses = {listen_addr};
 
-            g_state.node = new MyceliumNode(MyceliumNode::create(cfg));
+            g_state.node = new MyceliumNode(MyceliumNode::create(p2p));
+            g_state.node->init_storage(p2p.storage);
+            g_state.node->load_chain(g_state.tokenomics, g_state.wallet);
             g_state.node_running = true;
             g_gui.node_started = true;
 
