@@ -25,6 +25,25 @@
 #endif
 
 // ============================================================
+// Global state (single node) — defined before GUI include
+// ============================================================
+struct AppState {
+    Profile my_profile;
+    SocialGraph social;
+    Guestbook guestbook;
+    UsernameRegistry identity;
+    Wallet wallet;
+    Tokenomics tokenomics;
+    MyceliumNode* node = nullptr;
+    bool node_running = false;
+    VideoMetadata current_video;
+};
+
+static AppState g_state;
+
+#include "gui/myc_gui.hpp"
+
+// ============================================================
 // ANSI color helpers (YouTube red)
 // ============================================================
 static inline const char* ansi_red() {
@@ -103,23 +122,6 @@ static inline void print_yt_line(const char* label, const char* value) {
 static inline void print_yt_sep() {
     printf("%s--------------------------------------------%s\n", R, X);
 }
-
-// ============================================================
-// Global state (single node)
-// ============================================================
-struct AppState {
-    Profile my_profile;
-    SocialGraph social;
-    Guestbook guestbook;
-    UsernameRegistry identity;
-    Wallet wallet;
-    Tokenomics tokenomics;
-    MyceliumNode* node = nullptr;
-    bool node_running = false;
-    VideoMetadata current_video;
-};
-
-static AppState g_state;
 
 // ============================================================
 // Command handlers
@@ -662,6 +664,7 @@ static inline void print_usage(const char* prog) {
     printf("    wallet balance\n");
     printf("    wallet stake --amount N\n");
     printf("    mine\n");
+    printf("    gui\n");
     printf("    wallet unstake --amount N\n");
     printf("    wallet send --to ADDR --amount N\n");
     printf("    social follow --user U\n");
@@ -697,6 +700,13 @@ int main(int argc, char** argv) {
     std::string cmd = argv[1];
 
     if (cmd == "help" || cmd == "--help") { print_usage(argv[0]); return 0; }
+
+    if (cmd == "gui") {
+#ifdef _WIN32
+        ShowWindow(GetConsoleWindow(), SW_HIDE);
+#endif
+        return gui_run();
+    }
 
     if (cmd == "start") {
         const char* listen = nullptr;
