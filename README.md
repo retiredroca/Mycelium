@@ -82,6 +82,27 @@ cmake --build build --config Release
 ./build/Release/mycelium status
 ```
 
+### Versioning
+
+Version format: `0.1.{YY}.{DOW}.{WN}` — where `YY` is the 2-digit year,
+`DOW` is the day of week (0=Sun..6=Sat), and `WN` is the ISO week number.
+Set via `-DMYCELIUM_BUILD_VERSION=...` at configure time.
+
+- **Local builds**: default version `0.01`
+- **CI builds**: auto-computed from the current date
+
+### CI / Build Automation
+
+Builds run on push/PR to `main` **only when** the commit message (or PR title/body)
+contains a trigger keyword:
+
+| Keyword   | Action                        |
+|-----------|-------------------------------|
+| `buildRC` | Build binary with auto-version |
+| `buildRelease` | Same as RC (no tagging)   |
+
+Example: `feat: add mining stats; buildRC`
+
 ### Basic Commands
 
 ```bash

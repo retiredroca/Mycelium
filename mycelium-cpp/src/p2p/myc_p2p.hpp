@@ -241,7 +241,7 @@ struct LocalNodeInfo {
     std::vector<std::string> listen_addresses;
     std::vector<NodeCapInfo> capabilities;
     int64_t started_at = 0;
-    std::string version = "0.1.0";
+    std::string version = MYCELIUM_VERSION;
     std::string onion_address;
 };
 

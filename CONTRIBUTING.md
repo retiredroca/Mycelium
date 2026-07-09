@@ -27,6 +27,23 @@ environment for everyone. We do not tolerate harassment or discrimination of any
    cmake --build build --config Release
    ```
 
+### Versioning
+
+Version format: `0.1.{YY}.{DOW}.{WN}` (e.g. `0.1.26.4.28`).
+- `0.1` — major/minor
+- `YY` — 2-digit year
+- `DOW` — day of week (0=Sun..6=Sat)
+- `WN` — ISO week number
+
+Local builds use `0.01` by default. CI builds compute it automatically.
+
+### CI / Build Triggers
+
+The GitHub Actions workflow runs on push/PR to `main` **only when** the
+commit message or PR title/body contains `buildRC` or `buildRelease`.
+The version is computed from the current date and passed as
+`-DMYCELIUM_BUILD_VERSION` to CMake.
+
 ### Running Tests
 
 There is no separate test suite. The project is validated by building and running the CLI commands:
@@ -84,6 +101,7 @@ security: harden key exchange protocol
 3. **Run all CLI commands** to verify nothing is broken
 4. **Update documentation** if needed
 5. **Submit PR** with a clear description of changes
+6. **Trigger a CI build** by including `buildRC` in the PR title or body (or push a commit with `buildRC` in the message)
 
 ## Areas for Contribution
 

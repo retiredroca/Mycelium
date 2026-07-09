@@ -515,7 +515,7 @@ static inline void handle_network_peers() {
 
 static inline void handle_status() {
     print_yt_header("\xF0\x9F\x8E\xAC", "MYTUBE STATUS");
-    print_yt_line("Version", "0.1.0");
+    print_yt_line("Version", MYCELIUM_VERSION);
     print_yt_line("Network", g_state.node_running ? "Online" : "Offline");
     if (g_state.node_running && g_state.node) {
         char peers[32];
@@ -645,7 +645,7 @@ static inline void handle_video_manifest() {
 // ============================================================
 static inline void print_usage(const char* prog) {
     printf("\n%s============================================%s\n", R, X);
-    printf("%s  \xF0\x9F\x8E\xAC  MYTUBE PROTOCOL v0.1.0%s\n", R, X);
+    printf("%s  \xF0\x9F\x8E\xAC  MYTUBE PROTOCOL v%s%s\n", R, MYCELIUM_VERSION, X);
     printf("%s============================================%s\n", R, X);
     printf("  A YouTube-like P2P video network\n\n");
     printf("  Usage: %s <command> [args]\n\n", prog);
