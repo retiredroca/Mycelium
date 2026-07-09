@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include "crypto/myc_crypto.hpp"
+#include "crypto/myc_bip39.hpp"
 #include "protocol/myc_protocol.hpp"
 #include "post/myc_post.hpp"
 #include "storage/myc_storage.hpp"
@@ -37,6 +38,7 @@ struct AppState {
     MyceliumNode* node = nullptr;
     bool node_running = false;
     VideoMetadata current_video;
+    std::array<uint8_t, 32> private_key = {};
 };
 
 static AppState g_state;
@@ -138,6 +140,8 @@ static inline void handle_start(const char* listen_addr, const char* bootstrap,
     cfg.tor_control_port = tor_ctrl;
 
     g_state.node = new MyceliumNode(MyceliumNode::create(cfg));
+    g_state.node->init_storage(cfg.storage);
+    g_state.node->load_chain(g_state.tokenomics, g_state.wallet);
     g_state.node_running = true;
 
     print_yt_header("\xF0\x9F\x94\x8C", "MYTUBE NODE STARTED");
@@ -335,48 +339,157 @@ static inline void handle_feed(int limit) {
     print_yt_sep();
 }
 
+static inline bool read_passphrase(const char* prompt, char* buf, size_t bufsz) {
+    printf("%s", prompt);
+    fflush(stdout);
+    if (!fgets(buf, (int)bufsz, stdin)) return false;
+    size_t len = strlen(buf);
+    while (len > 0 && (buf[len-1] == '\n' || buf[len-1] == '\r')) buf[--len] = '\0';
+    return len > 0;
+}
+
 static inline void handle_wallet_create() {
-    std::array<uint8_t, 32> pk;
-    random_bytes(pk.data(), 32);
+    char passphrase[128], confirm[128];
+
+    // Passphrase input
+    if (!read_passphrase("  Enter passphrase (min 8 chars, 1 digit, 1 special): ", passphrase, sizeof(passphrase))) {
+        printf("  Canceled.\n");
+        return;
+    }
+    if (!validate_passphrase(passphrase)) {
+        printf("  Passphrase must be >=8 chars with at least 1 digit and 1 special character.\n");
+        return;
+    }
+    if (!read_passphrase("  Confirm passphrase: ", confirm, sizeof(confirm))) {
+        printf("  Canceled.\n");
+        return;
+    }
+    if (strcmp(passphrase, confirm) != 0) {
+        printf("  Passphrases do not match.\n");
+        return;
+    }
+
+    // Create wallet
+    std::vector<std::string> mnemonic_words;
+    std::array<uint8_t, 64> seed;
+    std::array<uint8_t, 32> private_key, public_key;
+    if (!wallet_create_full(mnemonic_words, seed, private_key, public_key, passphrase)) {
+        printf("  Failed to create wallet.\n");
+        return;
+    }
+
+    // Save to disk
+    std::string wallet_path = "./data/chain/wallet.dat";
+    if (!wallet_save(wallet_path, private_key, mnemonic_words, passphrase)) {
+        printf("  Warning: could not save encrypted wallet.dat\n");
+    }
+
+    // Set up global wallet state
     g_state.wallet = Wallet{};
-    memcpy(g_state.wallet.public_key.data(), pk.data(), 32);
-    auto addr = base64_encode(pk.data(), 16);
+    g_state.wallet.public_key = public_key;
+    g_state.private_key = private_key;
+
+    auto addr = base64_encode(public_key.data(), 16);
     printf("  Wallet created: MYT%s\n", addr.c_str());
+    printf("\n  \xE2\x9A\xA0\xEF\xB8\x8F  BACKUP YOUR MNEMONIC (24 words):\n\n");
+    for (size_t i = 0; i < mnemonic_words.size(); ++i) {
+        printf("    %2zu. %s\n", i + 1, mnemonic_words[i].c_str());
+    }
+    printf("\n  \xE2\x9A\xA0\xEF\xB8\x8F  Store these words safely. "
+           "They are needed to restore your wallet.\n\n");
+    memset(passphrase, 0, sizeof(passphrase));
+    memset(confirm, 0, sizeof(confirm));
+}
+
+static inline void handle_wallet_restore(int argc, char** argv) {
+    std::vector<std::string> words;
+    for (int i = 3; i < argc; ++i) {
+        if (argv[i][0] == '-') break;
+        words.push_back(argv[i]);
+    }
+    if (words.size() != 24) {
+        printf("  Provide exactly 24 words.\n");
+        return;
+    }
+
+    // Validate mnemonic
+    std::array<uint8_t, 32> entropy;
+    if (!mnemonic_restore(words, entropy)) {
+        printf("  Invalid mnemonic — checksum mismatch or unknown words.\n");
+        return;
+    }
+
+    char passphrase[128];
+    if (!read_passphrase("  Enter passphrase: ", passphrase, sizeof(passphrase))) {
+        printf("  Canceled.\n");
+        return;
+    }
+
+    // Derive seed + keypair
+    std::array<uint8_t, 64> seed;
+    mnemonic_to_seed(words, passphrase, seed.data());
+
+    auto hash = sha512(seed.data(), 64);
+    std::array<uint8_t, 32> private_key;
+    memcpy(private_key.data(), hash.data(), 32);
+    private_key[0] &= 248; private_key[31] &= 127; private_key[31] |= 64;
+
+    std::array<uint8_t, 32> public_key = ed25519_pubkey(private_key);
+
+    // Save to disk
+    std::string wallet_path = "./data/chain/wallet.dat";
+    if (!wallet_save(wallet_path, private_key, words, passphrase)) {
+        printf("  Warning: could not save encrypted wallet.dat\n");
+    }
+
+    g_state.wallet = Wallet{};
+    g_state.wallet.public_key = public_key;
+    g_state.private_key = private_key;
+
+    auto addr = base64_encode(public_key.data(), 16);
+    printf("  Wallet restored: MYT%s\n", addr.c_str());
+    memset(passphrase, 0, sizeof(passphrase));
 }
 
 static inline void handle_mine() {
-    if (g_state.wallet.public_key == std::array<uint8_t, 32>{}) {
-        std::array<uint8_t, 32> pk;
-        random_bytes(pk.data(), 32);
-        g_state.wallet = Wallet{};
-        memcpy(g_state.wallet.public_key.data(), pk.data(), 32);
-        auto addr = base64_encode(pk.data(), 16);
-        printf("  Created wallet: MYT%s\n", addr.c_str());
+    if (g_state.private_key == std::array<uint8_t, 32>{}) {
+        printf("  No wallet. Use 'wallet create' or 'wallet restore' first.\n");
+        return;
     }
+
+    if (!g_state.node) {
+        printf("  No node running. Use 'start' first.\n");
+        // Create a throwaway node for mining
+        P2pConfig cfg;
+        cfg.listen_addresses.push_back("/ip4/0.0.0.0/tcp/0");
+        cfg.capabilities.push_back({kCapFull});
+        cfg.storage.data_dir = "./data";
+        g_state.node = new MyceliumNode(MyceliumNode::create(cfg));
+        g_state.node->init_storage(cfg.storage);
+        g_state.node->load_chain(g_state.tokenomics, g_state.wallet);
+    }
+
     uint64_t epoch = g_state.tokenomics.current_epoch;
     uint64_t reward_amount = mining_block_reward(epoch);
     uint32_t diff = mining_difficulty_bits(epoch);
+    size_t mp_sz = g_state.node->mempool_size();
 
-    printf("  Mining at epoch %llu... (difficulty: %u bits, reward: %llu MYTUBE)\n",
-           (unsigned long long)epoch, diff, (unsigned long long)reward_amount);
+    printf("  Mining block at epoch %llu... (difficulty: %u bits, reward: %llu MYTUBE, mempool: %zu txs)\n",
+           (unsigned long long)epoch, diff, (unsigned long long)reward_amount, mp_sz);
 
-    uint64_t nonce = mining_search(g_state.wallet.public_key, epoch, kMiningMaxNoncePerAttempt);
+    bool found = g_state.node->mine_block(
+        g_state.tokenomics, g_state.wallet,
+        g_state.private_key, kMiningMaxNoncePerAttempt);
 
-    if (nonce == UINT64_MAX) {
+    if (!found) {
         printf("  No block found in %llu attempts.\n", (unsigned long long)kMiningMaxNoncePerAttempt);
         return;
     }
 
-    if (!mint_to_wallet(g_state.tokenomics, g_state.wallet, reward_amount)) {
-        printf("  Supply exhausted — cannot mint more tokens.\n");
-        return;
-    }
-    g_state.tokenomics.apply_disinflation();
-
     char bal[32];
     snprintf(bal, sizeof(bal), "%llu MYTUBE", (unsigned long long)g_state.wallet.balance);
-    printf("  \xF0\x9F\x9B\x8F Block found! Nonce: %llu, Reward: %llu MYTUBE, Balance: %s\n",
-           (unsigned long long)nonce, (unsigned long long)reward_amount, bal);
+    printf("  \xF0\x9F\x9B\x8F Block mined! Height: %zu, Reward: %llu MYTUBE, Balance: %s\n",
+           g_state.node->chain.size() - 1, (unsigned long long)reward_amount, bal);
 }
 
 static inline void handle_wallet_balance() {
@@ -410,11 +523,46 @@ static inline void handle_wallet_unstake(uint64_t amount) {
 }
 
 static inline void handle_wallet_send(const char* to, uint64_t amount) {
+    if (g_state.private_key == std::array<uint8_t, 32>{}) {
+        printf("  No wallet. Use 'wallet create' or 'wallet restore' first.\n");
+        return;
+    }
+    if (!to || strlen(to) == 0) {
+        printf("  Error: --to ADDR is required.\n");
+        return;
+    }
+
+    // Decode destination address (base64 -> 32 bytes)
+    auto to_bytes = base64_decode(to);
+    std::array<uint8_t, 32> to_pk = {};
+    if (to_bytes.size() < 32) {
+        printf("  Invalid destination address (expected base64, got '%s').\n", to);
+        return;
+    }
+    memcpy(to_pk.data(), to_bytes.data(), 32);
+
+    // Deduct balance locally
     auto err = g_state.wallet.send(amount);
-    if (err == kTokenOk)
-        printf("  Sent %llu MYTUBE to %s.\n", (unsigned long long)amount, to ? to : "unknown");
-    else
+    if (err != kTokenOk) {
         printf("  Error: %s\n", token_strerror(err));
+        return;
+    }
+
+    // Create and sign transaction
+    auto tx = Transaction::create(g_state.wallet.public_key, to_pk, amount);
+    tx.sign(g_state.private_key);
+    tx.status = kTxPending;
+
+    // Add to mempool
+    if (g_state.node) {
+        g_state.node->add_to_mempool(tx);
+        g_state.node->broadcast_transaction(tx);
+    }
+
+    char bal[32];
+    snprintf(bal, sizeof(bal), "%llu MYTUBE", (unsigned long long)g_state.wallet.balance);
+    printf("  Sent %llu MYTUBE to %s. Tx: %s, Balance: %s\n",
+           (unsigned long long)amount, to, tx.tx_id.c_str(), bal);
 }
 
 static inline void handle_social_follow(const char* user) {
@@ -651,6 +799,7 @@ static inline void print_usage(const char* prog) {
     printf("  Usage: %s <command> [args]\n\n", prog);
     printf("  Commands:\n");
     printf("    start [--listen ADDR] [--bootstrap ADDR] [--tor] [--tor-socks-port PORT] [--tor-control-port PORT] [--http-port PORT]\n");
+    printf("    wallet create\n    wallet restore <24 words>\n    wallet balance\n    wallet stake --amount N\n    wallet unstake --amount N\n    wallet send --to ADDR --amount N\n");
     printf("    profile create --display-name NAME [--username USER]\n");
     printf("    profile show [--user USER]\n");
     printf("    profile update [--bio TEXT] [--display-name NAME]\n");
@@ -660,13 +809,8 @@ static inline void print_usage(const char* prog) {
     printf("    profile theme [--preset P] [--primary COLOR]\n");
     printf("    post --content TEXT\n");
     printf("    feed [--limit N]\n");
-    printf("    wallet create\n");
-    printf("    wallet balance\n");
-    printf("    wallet stake --amount N\n");
     printf("    mine\n");
     printf("    gui\n");
-    printf("    wallet unstake --amount N\n");
-    printf("    wallet send --to ADDR --amount N\n");
     printf("    social follow --user U\n");
     printf("    social unfollow --user U\n");
     printf("    social block --user U\n");
@@ -790,6 +934,7 @@ int main(int argc, char** argv) {
     else if (cmd == "wallet" && argc > 2) {
         std::string action = argv[2];
         if (action == "create") handle_wallet_create();
+        else if (action == "restore") handle_wallet_restore(argc, argv);
         else if (action == "balance") handle_wallet_balance();
         else if (action == "stake") {
             for (int i = 3; i < argc - 1; ++i)

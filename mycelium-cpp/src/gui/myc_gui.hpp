@@ -38,6 +38,17 @@ enum {
     IDC_BALANCE_SUB    = 1019,
     IDC_MINE_INFO      = 1020,
     IDC_MINE_STATUS    = 1021,
+    IDC_RESTORE_WALLET = 1022,
+    IDC_WALLET_ADDR    = 1023,
+    // Wallet dialog controls
+    IDC_DLG_PASSPHRASE   = 1101,
+    IDC_DLG_CONFIRM      = 1102,
+    IDC_DLG_CREATE       = 1103,
+    IDC_DLG_CANCEL       = 1104,
+    IDC_DLG_MNEMONIC     = 1105,
+    IDC_DLG_DONE         = 1106,
+    IDC_DLG_WORDS        = 1107,
+    IDC_DLG_RESTORE      = 1108,
 };
 
 struct GuiData {
@@ -66,6 +77,10 @@ struct GuiData {
     std::atomic<bool> mining_active{false};
     bool node_started = false;
 };
+
+// Forward declarations for wallet dialogs
+static inline void gui_wallet_create_dialog(HWND hparent);
+static inline void gui_wallet_restore_dialog(HWND hparent);
 
 static GuiData g_gui;
 
@@ -119,6 +134,7 @@ static inline void gui_update_status() {
         "Network:   %s\r\n"
         "Peers:     %zu\r\n"
         "Tor:       %s\r\n"
+        "Wallet:    MYT%s\r\n"
         "Balance:   %llu MYTUBE\r\n"
         "Minted:    %llu / 1B\r\n"
         "Epoch:     %llu\r\n"
@@ -130,6 +146,7 @@ static inline void gui_update_status() {
         g_state.node_running ? "Online" : "Offline",
         g_state.node ? g_state.node->peer_count() : (size_t)0,
         (g_state.node && !g_state.node->local_info.onion_address.empty()) ? "Enabled" : "Disabled",
+        g_state.wallet.public_key == std::array<uint8_t, 32>{} ? "none" : base64_encode(g_state.wallet.public_key.data(), 16).c_str(),
         (unsigned long long)g_state.wallet.balance,
         (unsigned long long)g_state.tokenomics.minted_supply,
         (unsigned long long)g_state.tokenomics.current_epoch,
@@ -435,28 +452,32 @@ static LRESULT CALLBACK gui_wndproc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
         mkfont(hbb, g_font);
 
         HWND bw = mkctrl(hwnd, "BUTTON", "Create Wallet",
-            WS_TABSTOP | BS_PUSHBUTTON, 18, 478, 100, 24, IDC_CREATE_WALLET);
+            WS_TABSTOP | BS_PUSHBUTTON, 18, 478, 85, 24, IDC_CREATE_WALLET);
+        mkfont(bw, g_font);
+
+        bw = mkctrl(hwnd, "BUTTON", "Restore",
+            WS_TABSTOP | BS_PUSHBUTTON, 108, 478, 70, 24, IDC_RESTORE_WALLET);
         mkfont(bw, g_font);
 
         bw = mkctrl(hwnd, "BUTTON", "Mine",
-            WS_TABSTOP | BS_PUSHBUTTON, 125, 478, 70, 24, IDC_MINE);
+            WS_TABSTOP | BS_PUSHBUTTON, 183, 478, 55, 24, IDC_MINE);
         mkfont(bw, g_font);
 
         bw = mkctrl(hwnd, "BUTTON", "Open Web UI",
-            WS_TABSTOP | BS_PUSHBUTTON, 202, 478, 95, 24, IDC_OPEN_WEB);
+            WS_TABSTOP | BS_PUSHBUTTON, 243, 478, 80, 24, IDC_OPEN_WEB);
         mkfont(bw, g_font);
 
         g_gui.hwnd_start = mkctrl(hwnd, "BUTTON", "START",
-            WS_TABSTOP | BS_PUSHBUTTON, 306, 478, 70, 24, IDC_START);
+            WS_TABSTOP | BS_PUSHBUTTON, 330, 478, 60, 24, IDC_START);
         mkfont(g_gui.hwnd_start, g_font_bold);
 
         g_gui.hwnd_stop = mkctrl(hwnd, "BUTTON", "STOP",
-            WS_TABSTOP | BS_PUSHBUTTON, 382, 478, 70, 24, IDC_STOP);
+            WS_TABSTOP | BS_PUSHBUTTON, 395, 478, 60, 24, IDC_STOP);
         mkfont(g_gui.hwnd_stop, g_font_bold);
         EnableWindow(g_gui.hwnd_stop, FALSE);
 
         g_gui.hwnd_balance = mkctrl(hwnd, "STATIC", "Balance: 0 MYTUBE",
-            SS_CENTERIMAGE, 460, 476, 180, 26, IDC_BALANCE_TEXT);
+            SS_CENTERIMAGE, 465, 476, 175, 26, IDC_BALANCE_TEXT);
         mkfont(g_gui.hwnd_balance, g_font_bold);
 
         // === STATUS BAR ===
@@ -575,14 +596,10 @@ static LRESULT CALLBACK gui_wndproc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
             gui_update_status();
 
         } else if (id == IDC_CREATE_WALLET) {
-            std::array<uint8_t, 32> pk;
-            random_bytes(pk.data(), 32);
-            g_state.wallet = Wallet{};
-            memcpy(g_state.wallet.public_key.data(), pk.data(), 32);
-            auto addr = base64_encode(pk.data(), 16);
-            gui_log("[WALLET] Created: MYT%s\r\n", addr.c_str());
-            gui_add_activity("now", "Wallet created", "0.00 MYTUBE", "Ready");
-            gui_update_status();
+            gui_wallet_create_dialog(hwnd);
+
+        } else if (id == IDC_RESTORE_WALLET) {
+            gui_wallet_restore_dialog(hwnd);
 
         } else if (id == IDC_MINE) {
             if (g_gui.mining_active) {
@@ -631,6 +648,286 @@ static LRESULT CALLBACK gui_wndproc(HWND hwnd, UINT msg, WPARAM w, LPARAM l) {
         return DefWindowProc(hwnd, msg, w, l);
     }
     return 0;
+}
+
+// ============================================================
+// Wallet dialogs
+// ============================================================
+
+static inline void gui_show_mnemonic_dialog(HWND hparent, const std::vector<std::string>& words) {
+    if (words.size() != 24) return;
+    HINSTANCE hinst = GetModuleHandle(0);
+    int dpi = GetDeviceCaps(GetDC(hparent), LOGPIXELSY);
+    int fs9 = -MulDiv(9, dpi, 72);
+    HFONT font = CreateFont(fs9, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Consolas");
+
+    RECT pr; GetWindowRect(hparent, &pr);
+    int w = 420, h = 380;
+    int x = pr.left + (pr.right - pr.left - w) / 2;
+    int y = pr.top + (pr.bottom - pr.top - h) / 2;
+
+    HWND hdlg = CreateWindowEx(0, "STATIC", "Wallet Created",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        x, y, w, h, hparent, 0, hinst, 0);
+    SetWindowPos(hdlg, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    EnableWindow(hparent, FALSE);
+
+    auto mk = [&](const char* cls, const char* text, DWORD style, int cx, int cy, int cw, int ch, int id) {
+        return CreateWindowEx(0, cls, text, style | WS_CHILD | WS_VISIBLE,
+            cx, cy, cw, ch, hdlg, (HMENU)(INT_PTR)id, hinst, 0);
+    };
+
+    char addr[64];
+    snprintf(addr, sizeof(addr), "Address: MYT%s", base64_encode(g_state.wallet.public_key.data(), 16).c_str());
+    mk("STATIC", addr, SS_CENTER, 10, 10, 390, 20, 0);
+    SendMessage(GetDlgItem(hdlg, 0), WM_SETFONT, (WPARAM)font, 0);
+
+    mk("STATIC", "BACKUP YOUR MNEMONIC (24 words):", SS_CENTER, 10, 34, 390, 16, 0);
+
+    char word_buf[2048] = "";
+    for (int i = 0; i < 24; ++i) {
+        char line[64];
+        int col = i % 3;
+        int row = i / 3;
+        snprintf(line, sizeof(line), "%2d. %s", i + 1, words[i].c_str());
+        int lx = 14 + col * 130;
+        int ly = 56 + row * 18;
+        HWND hw = mk("STATIC", line, 0, lx, ly, 126, 16, 1000 + i);
+        SendMessage(hw, WM_SETFONT, (WPARAM)font, 0);
+        strcat(word_buf, words[i].c_str());
+        if (i < 23) strcat(word_buf, " ");
+    }
+
+    mk("BUTTON", "I've saved these words",
+        BS_PUSHBUTTON | WS_TABSTOP, 100, 320, 210, 26, IDC_DLG_DONE);
+
+    // Message loop for this dialog
+    HWND hfocus = GetDlgItem(hdlg, IDC_DLG_DONE);
+    SetFocus(hfocus);
+
+    MSG msg;
+    bool done = false;
+    while (!done && GetMessage(&msg, 0, 0, 0) > 0) {
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) done = true;
+        else if (msg.message == WM_COMMAND && LOWORD(msg.wParam) == IDC_DLG_DONE) done = true;
+        else if (msg.message == WM_CLOSE) done = true;
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    EnableWindow(hparent, TRUE);
+    SetForegroundWindow(hparent);
+    DestroyWindow(hdlg);
+    DeleteObject(font);
+}
+
+static inline void gui_wallet_create_dialog(HWND hparent) {
+    HINSTANCE hinst = GetModuleHandle(0);
+    RECT pr; GetWindowRect(hparent, &pr);
+    int w = 320, h = 170;
+    int x = pr.left + (pr.right - pr.left - w) / 2;
+    int y = pr.top + (pr.bottom - pr.top - h) / 2;
+
+    HWND hdlg = CreateWindowEx(0, "STATIC", "Create Wallet",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        x, y, w, h, hparent, 0, hinst, 0);
+    EnableWindow(hparent, FALSE);
+
+    auto mk = [&](const char* cls, const char* text, DWORD style, int cx, int cy, int cw, int ch, int id) {
+        return CreateWindowEx(0, cls, text, style | WS_CHILD | WS_VISIBLE,
+            cx, cy, cw, ch, hdlg, (HMENU)(INT_PTR)id, hinst, 0);
+    };
+
+    mk("STATIC", "Passphrase (min 8 chars, 1 digit, 1 special):", 0, 12, 12, 290, 14, 0);
+    HWND hpw = mk("EDIT", "", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL, 12, 28, 290, 22, IDC_DLG_PASSPHRASE);
+    SendMessage(hpw, EM_SETLIMITTEXT, 127, 0);
+
+    mk("STATIC", "Confirm passphrase:", 0, 12, 54, 150, 14, 0);
+    HWND hcf = mk("EDIT", "", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL, 12, 70, 290, 22, IDC_DLG_CONFIRM);
+    SendMessage(hcf, EM_SETLIMITTEXT, 127, 0);
+
+    mk("BUTTON", "Create", BS_PUSHBUTTON | WS_TABSTOP, 70, 106, 80, 26, IDC_DLG_CREATE);
+    mk("BUTTON", "Cancel", BS_PUSHBUTTON | WS_TABSTOP, 170, 106, 80, 26, IDC_DLG_CANCEL);
+
+    SetFocus(hpw);
+
+    MSG msg;
+    char passphrase[128] = "", confirm[128] = "";
+    bool done = false;
+    while (!done && GetMessage(&msg, 0, 0, 0) > 0) {
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) done = true;
+        else if (msg.message == WM_COMMAND) {
+            if (LOWORD(msg.wParam) == IDC_DLG_CANCEL) {
+                done = true;
+            } else if (LOWORD(msg.wParam) == IDC_DLG_CREATE || LOWORD(msg.wParam) == IDC_DLG_DONE) {
+                GetWindowText(GetDlgItem(hdlg, IDC_DLG_PASSPHRASE), passphrase, sizeof(passphrase));
+                GetWindowText(GetDlgItem(hdlg, IDC_DLG_CONFIRM), confirm, sizeof(confirm));
+
+                if (!validate_passphrase(passphrase)) {
+                    MessageBox(hdlg, "Passphrase must be >=8 chars with at least 1 digit and 1 special character.", "Invalid Passphrase", MB_OK | MB_ICONWARNING);
+                    SetFocus(GetDlgItem(hdlg, IDC_DLG_PASSPHRASE));
+                    continue;
+                }
+                if (strcmp(passphrase, confirm) != 0) {
+                    MessageBox(hdlg, "Passphrases do not match.", "Error", MB_OK | MB_ICONWARNING);
+                    SetFocus(GetDlgItem(hdlg, IDC_DLG_PASSPHRASE));
+                    continue;
+                }
+
+                std::vector<std::string> words;
+                std::array<uint8_t, 64> seed;
+                std::array<uint8_t, 32> priv, pub;
+                if (!wallet_create_full(words, seed, priv, pub, passphrase)) {
+                    MessageBox(hdlg, "Failed to create wallet.", "Error", MB_OK | MB_ICONERROR);
+                    continue;
+                }
+
+                g_state.wallet = Wallet{};
+                g_state.wallet.public_key = pub;
+
+                char wpath[MAX_PATH];
+                snprintf(wpath, sizeof(wpath), "%s/chain/wallet.dat", g_state.node ? g_state.node->storage_cfg.data_dir.c_str() : "./data");
+                wallet_save(wpath, priv, words, passphrase);
+
+                EnableWindow(hparent, TRUE);
+                SetForegroundWindow(hparent);
+                DestroyWindow(hdlg);
+                done = true;
+
+                gui_show_mnemonic_dialog(hparent, words);
+                gui_log("[WALLET] Created: MYT%s\r\n", base64_encode(pub.data(), 16).c_str());
+                gui_add_activity("now", "Wallet created", "0.00 MYTUBE", "Ready");
+                gui_update_status();
+                memset(passphrase, 0, sizeof(passphrase));
+                memset(confirm, 0, sizeof(confirm));
+            }
+        } else if (msg.message == WM_CLOSE) {
+            done = true;
+        } else {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+
+    if (!done) { // user closed without completing
+        EnableWindow(hparent, TRUE);
+        SetForegroundWindow(hparent);
+        DestroyWindow(hdlg);
+    }
+    memset(passphrase, 0, sizeof(passphrase));
+    memset(confirm, 0, sizeof(confirm));
+}
+
+static inline void gui_wallet_restore_dialog(HWND hparent) {
+    HINSTANCE hinst = GetModuleHandle(0);
+    RECT pr; GetWindowRect(hparent, &pr);
+    int w = 400, h = 280;
+    int x = pr.left + (pr.right - pr.left - w) / 2;
+    int y = pr.top + (pr.bottom - pr.top - h) / 2;
+
+    HWND hdlg = CreateWindowEx(0, "STATIC", "Restore Wallet",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+        x, y, w, h, hparent, 0, hinst, 0);
+    EnableWindow(hparent, FALSE);
+
+    auto mk = [&](const char* cls, const char* text, DWORD style, int cx, int cy, int cw, int ch, int id) {
+        return CreateWindowEx(0, cls, text, style | WS_CHILD | WS_VISIBLE,
+            cx, cy, cw, ch, hdlg, (HMENU)(INT_PTR)id, hinst, 0);
+    };
+
+    mk("STATIC", "Mnemonic (24 words):", 0, 12, 10, 200, 14, 0);
+    HWND hwords = mk("EDIT", "", WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL, 12, 26, 370, 120, IDC_DLG_WORDS);
+    SendMessage(hwords, EM_SETLIMITTEXT, 1024, 0);
+
+    mk("STATIC", "Passphrase:", 0, 12, 154, 100, 14, 0);
+    HWND hpw = mk("EDIT", "", WS_BORDER | ES_PASSWORD | ES_AUTOHSCROLL, 12, 170, 370, 22, IDC_DLG_PASSPHRASE);
+    SendMessage(hpw, EM_SETLIMITTEXT, 127, 0);
+
+    mk("BUTTON", "Restore", BS_PUSHBUTTON | WS_TABSTOP, 100, 210, 90, 28, IDC_DLG_RESTORE);
+    mk("BUTTON", "Cancel", BS_PUSHBUTTON | WS_TABSTOP, 210, 210, 90, 28, IDC_DLG_CANCEL);
+
+    SetFocus(hwords);
+
+    MSG msg;
+    bool done = false;
+    while (!done && GetMessage(&msg, 0, 0, 0) > 0) {
+        if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) done = true;
+        else if (msg.message == WM_COMMAND) {
+            if (LOWORD(msg.wParam) == IDC_DLG_CANCEL) {
+                done = true;
+            } else if (LOWORD(msg.wParam) == IDC_DLG_RESTORE) {
+                char word_buf[1024] = "", passphrase[128] = "";
+                GetWindowText(GetDlgItem(hdlg, IDC_DLG_WORDS), word_buf, sizeof(word_buf));
+                GetWindowText(GetDlgItem(hdlg, IDC_DLG_PASSPHRASE), passphrase, sizeof(passphrase));
+
+                if (!passphrase[0]) {
+                    MessageBox(hdlg, "Please enter a passphrase.", "Error", MB_OK | MB_ICONWARNING);
+                    SetFocus(hpw);
+                    continue;
+                }
+
+                // Parse words
+                std::vector<std::string> words;
+                char* tok = strtok(word_buf, " \t\r\n");
+                while (tok) {
+                    words.push_back(tok);
+                    tok = strtok(nullptr, " \t\r\n");
+                }
+                if (words.size() != 24) {
+                    char err[64];
+                    snprintf(err, sizeof(err), "Expected 24 words, got %zu.", words.size());
+                    MessageBox(hdlg, err, "Invalid Mnemonic", MB_OK | MB_ICONWARNING);
+                    continue;
+                }
+
+                // Validate and restore
+                std::array<uint8_t, 32> entropy;
+                if (!mnemonic_restore(words, entropy)) {
+                    MessageBox(hdlg, "Invalid mnemonic: checksum mismatch or unknown words.", "Error", MB_OK | MB_ICONERROR);
+                    continue;
+                }
+
+                // Derive keypair
+                std::array<uint8_t, 64> seed;
+                mnemonic_to_seed(words, passphrase, seed.data());
+                auto hash = sha512(seed.data(), 64);
+                std::array<uint8_t, 32> priv;
+                memcpy(priv.data(), hash.data(), 32);
+                priv[0] &= 248; priv[31] &= 127; priv[31] |= 64;
+                std::array<uint8_t, 32> pub = ed25519_pubkey(priv);
+
+                g_state.wallet = Wallet{};
+                g_state.wallet.public_key = pub;
+
+                char wpath[MAX_PATH];
+                snprintf(wpath, sizeof(wpath), "%s/chain/wallet.dat", g_state.node ? g_state.node->storage_cfg.data_dir.c_str() : "./data");
+                wallet_save(wpath, priv, words, passphrase);
+
+                EnableWindow(hparent, TRUE);
+                SetForegroundWindow(hparent);
+                DestroyWindow(hdlg);
+                done = true;
+
+                gui_log("[WALLET] Restored: MYT%s\r\n", base64_encode(pub.data(), 16).c_str());
+                gui_add_activity("now", "Wallet restored", "0.00 MYTUBE", "Ready");
+                gui_update_status();
+                memset(passphrase, 0, sizeof(passphrase));
+            }
+        } else if (msg.message == WM_CLOSE) {
+            done = true;
+        } else {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+
+    if (!done) {
+        EnableWindow(hparent, TRUE);
+        SetForegroundWindow(hparent);
+        DestroyWindow(hdlg);
+    }
 }
 
 static inline int gui_run() {

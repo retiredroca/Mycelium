@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include "crypto/myc_crypto.hpp"
 #include "protocol/myc_protocol.hpp"
+#include "storage/myc_storage.hpp"
 #include "myc_profile_theme.hpp"
 #include "myc_profile_layout.hpp"
 #include "myc_profile_validation.hpp"
@@ -127,6 +128,65 @@ struct ProfileBuilder {
 
     Profile build() { return profile; }
 };
+
+// ============================================================
+// Profile serialize/deserialize
+// ============================================================
+static inline void profile_serialize(const Profile& p, std::vector<uint8_t>& out) {
+    std::vector<uint8_t> payload;
+    buf_write_str(payload, p.id);
+    buf_write_str(payload, p.peer_id);
+    buf_write_str(payload, p.username);
+    buf_write_str(payload, p.display_name);
+    buf_write_str(payload, p.bio);
+    buf_write_str(payload, p.avatar_cid);
+    buf_write_str(payload, p.banner_cid);
+    buf_write_u64(payload, (uint64_t)p.created_at);
+    buf_write_u64(payload, (uint64_t)p.updated_at);
+    buf_write_bytes(payload, p.signature.data(), (uint32_t)p.signature.size());
+
+    // Links
+    buf_write_u32(payload, (uint32_t)p.links.size());
+    for (auto& l : p.links) {
+        buf_write_str(payload, l.id);
+        buf_write_str(payload, l.title);
+        buf_write_str(payload, l.url);
+        buf_write_str(payload, l.icon);
+        buf_write_u32(payload, l.is_private ? 1 : 0);
+    }
+
+    FileHeader::write(out, kFileProfile, payload.data(), (uint32_t)payload.size());
+}
+
+static inline bool profile_deserialize(const uint8_t* data, size_t len, Profile& p) {
+    auto hdr = FileHeader::read(data, len);
+    if (hdr.magic != kFileMagic || hdr.type != kFileProfile) return false;
+    size_t off = 12;
+
+    p.id = buf_read_str(data, off, len);
+    p.peer_id = buf_read_str(data, off, len);
+    p.username = buf_read_str(data, off, len);
+    p.display_name = buf_read_str(data, off, len);
+    p.bio = buf_read_str(data, off, len);
+    p.avatar_cid = buf_read_str(data, off, len);
+    p.banner_cid = buf_read_str(data, off, len);
+    p.created_at = (int64_t)buf_read_u64(data, off, len);
+    p.updated_at = (int64_t)buf_read_u64(data, off, len);
+    p.signature = buf_read_bytes(data, off, len);
+
+    uint32_t nl = buf_read_u32(data, off, len);
+    p.links.clear();
+    for (uint32_t i = 0; i < nl; ++i) {
+        SocialLink l;
+        l.id = buf_read_str(data, off, len);
+        l.title = buf_read_str(data, off, len);
+        l.url = buf_read_str(data, off, len);
+        l.icon = buf_read_str(data, off, len);
+        l.is_private = buf_read_u32(data, off, len) != 0;
+        p.links.push_back(l);
+    }
+    return true;
+}
 
 static inline std::string compute_profile_cid(const Profile& p) {
     auto canon = p.canonical_form();

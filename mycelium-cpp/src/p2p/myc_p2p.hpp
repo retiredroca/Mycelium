@@ -8,6 +8,7 @@
 #include "protocol/myc_protocol.hpp"
 #include "post/myc_post.hpp"
 #include "storage/myc_storage.hpp"
+#include "token/myc_token.hpp"
 
 static inline constexpr const char* kProtocolName = "/mycelium-node/1.0.0";
 static inline constexpr const char* kGossipTopicPosts = "posts";
@@ -121,6 +122,7 @@ enum GossipPayloadType : uint8_t {
     kGossipSyncResponse = 4,
     kGossipVideoChunkRequest = 5,
     kGossipVideoChunkResponse = 6,
+    kGossipTx = 7,
 };
 
 struct GossipMessage {
@@ -234,6 +236,7 @@ struct P2pConfig {
     uint16_t tor_socks_port = 9050;
     uint16_t tor_control_port = 9051;
     std::string onion_service_dir;
+    StorageConfig storage;
 };
 
 struct LocalNodeInfo {
@@ -250,6 +253,9 @@ struct MyceliumNode {
     PeerTable peer_table;
     GossipManager gossip;
     std::unordered_map<std::string, Post> post_cache;
+    std::unordered_map<std::string, Transaction> mempool;
+    std::vector<Block> chain;
+    std::array<uint8_t, 32> chain_tip_hash = {};
 
     static inline MyceliumNode create(const P2pConfig& config) {
         MyceliumNode node;
@@ -282,10 +288,6 @@ struct MyceliumNode {
         peer_table.remove_peer(peer_id);
     }
 
-    void store_post(const Post& post) {
-        post_cache[post.id] = post;
-    }
-
     Post* get_post(const std::string& post_id) {
         auto it = post_cache.find(post_id);
         if (it == post_cache.end()) return nullptr;
@@ -293,4 +295,228 @@ struct MyceliumNode {
     }
 
     size_t peer_count() const { return peer_table.peer_count(); }
+
+    // ============================================================
+    // Mempool management
+    // ============================================================
+    bool add_to_mempool(const Transaction& tx) {
+        if (mempool.count(tx.tx_id)) return false;
+        mempool[tx.tx_id] = tx;
+        return true;
+    }
+
+    bool remove_from_mempool(const std::string& tx_id) {
+        return mempool.erase(tx_id) > 0;
+    }
+
+    Transaction* get_mempool_tx(const std::string& tx_id) {
+        auto it = mempool.find(tx_id);
+        if (it == mempool.end()) return nullptr;
+        return &it->second;
+    }
+
+    std::vector<Transaction> get_mempool_txs() const {
+        std::vector<Transaction> out;
+        out.reserve(mempool.size());
+        for (auto& [id, tx] : mempool) {
+            (void)id;
+            out.push_back(tx);
+        }
+        return out;
+    }
+
+    size_t mempool_size() const { return mempool.size(); }
+
+    // ============================================================
+    // Block chain management
+    // ============================================================
+    bool save_block(const Block& block, size_t height) {
+        std::vector<uint8_t> buf;
+        block_serialize(block, buf);
+        std::vector<uint8_t> out;
+        FileHeader::write(out, kFileBlock, buf.data(), (uint32_t)buf.size());
+        char path[256];
+        snprintf(path, sizeof(path), "%s/block_%zu.blk", storage_cfg.chain_dir.c_str(), height);
+        return write_file(path, out.data(), out.size());
+    }
+
+    bool add_block(const Block& block, Tokenomics& tokenomics, Wallet& wallet) {
+        chain.push_back(block);
+        chain_tip_hash = block.calc_hash();
+
+        if (!block.txs.empty()) {
+            auto& coinbase = block.txs[0];
+            if (coinbase.from == wallet.public_key && coinbase.to == wallet.public_key) {
+                mint_to_wallet(tokenomics, wallet, coinbase.amount);
+            }
+        }
+
+        save_block(block, chain.size() - 1);
+        tokenomics.apply_disinflation();
+
+        for (size_t i = 1; i < block.txs.size(); ++i) {
+            remove_from_mempool(block.txs[i].tx_id);
+        }
+        return true;
+    }
+
+    bool load_chain(Tokenomics& tokenomics, Wallet& wallet) {
+        for (size_t h = 0; ; ++h) {
+            char path[256];
+            snprintf(path, sizeof(path), "%s/block_%zu.blk", storage_cfg.chain_dir.c_str(), h);
+            std::vector<uint8_t> buf;
+            if (!read_file(path, buf)) break;
+            auto hdr = FileHeader::read(buf.data(), buf.size());
+            if (hdr.magic != kFileMagic || hdr.type != kFileBlock) break;
+            size_t off = 12;
+            auto block = block_deserialize(buf.data(), off, buf.size());
+            chain.push_back(block);
+            chain_tip_hash = block.calc_hash();
+
+            if (!block.txs.empty()) {
+                auto& coinbase = block.txs[0];
+                if (coinbase.from == wallet.public_key && coinbase.to == wallet.public_key) {
+                    mint_to_wallet(tokenomics, wallet, coinbase.amount);
+                }
+            }
+            tokenomics.current_epoch = block.epoch + 1;
+        }
+        return !chain.empty();
+    }
+
+    bool mine_block(Tokenomics& tokenomics, Wallet& wallet,
+                    const std::array<uint8_t, 32>& private_key,
+                    uint64_t max_nonce = kMiningMaxNoncePerAttempt) {
+        uint64_t epoch = tokenomics.current_epoch;
+        uint64_t reward = mining_block_reward(epoch);
+        if (reward == 0) return false;
+
+        auto coinbase = Transaction::create(wallet.public_key, wallet.public_key, reward);
+        coinbase.status = kTxConfirmed;
+
+        std::vector<Transaction> block_txs;
+        block_txs.push_back(coinbase);
+        for (auto& [id, tx] : mempool) {
+            (void)id;
+            block_txs.push_back(tx);
+        }
+
+        auto merkle = calc_merkle_root(block_txs);
+
+        Block block;
+        block.prev_hash = chain_tip_hash;
+        block.merkle_root = merkle;
+        block.timestamp = ProtocolMessage{}.now_sec();
+        block.nonce = 0;
+        block.epoch = epoch;
+        block.miner_pubkey = wallet.public_key;
+        block.txs = block_txs;
+
+        uint64_t nonce = block_mining_search(block, max_nonce);
+        if (nonce == UINT64_MAX) return false;
+        block.nonce = nonce;
+
+        auto block_hash = block.calc_hash();
+        auto sig = ed25519_sign(block_hash.data(), 32, private_key);
+        block.signature.assign(sig.begin(), sig.end());
+
+        return add_block(block, tokenomics, wallet);
+    }
+
+    void broadcast_transaction(const Transaction& tx) {
+        (void)tx;
+        // Stub: In full P2P implementation, serialize tx into
+        // a ProtocolMessage with kMsgTransaction and gossip it.
+    }
+
+    // Storage management
+    StorageConfig storage_cfg;
+
+    bool init_storage(const StorageConfig& cfg) {
+        storage_cfg = cfg;
+        if (!ensure_dirs(storage_cfg)) return false;
+
+        // Load posts from disk
+        auto files = scan_dir(storage_cfg.posts_dir, ".mycpost");
+        for (auto& f : files) {
+            std::vector<uint8_t> buf;
+            if (!read_file(f, buf)) continue;
+            Post p;
+            if (post_deserialize(buf.data(), buf.size(), p))
+                post_cache[p.id] = p;
+        }
+
+        return true;
+    }
+
+    void save_post_to_disk(const Post& p) {
+        std::vector<uint8_t> buf;
+        post_serialize(p, buf);
+        std::string path = storage_cfg.posts_dir + "/" + p.id + ".mycpost";
+        write_file(path, buf.data(), buf.size());
+    }
+
+    void store_post(const Post& post) {
+        post_cache[post.id] = post;
+        save_post_to_disk(post);
+    }
+
+    void delete_post_from_disk(const std::string& post_id) {
+        std::string path = storage_cfg.posts_dir + "/" + post_id + ".mycpost";
+        delete_file(path);
+    }
+
+    void prune_expired_posts() {
+        int64_t now = ProtocolMessage{}.now_sec();
+        std::vector<std::string> expired;
+        for (auto& [id, post] : post_cache) {
+            if (post.is_expired() || (post.remaining_ttl(now) <= 0 && !post.is_permanent))
+                expired.push_back(id);
+        }
+        for (auto& id : expired) {
+            delete_post_from_disk(id);
+            post_cache.erase(id);
+        }
+    }
+
+    // Save tokenomics + wallet state
+    bool save_state(const Tokenomics& t, const Wallet& w) {
+        std::vector<uint8_t> payload;
+        buf_write_u64(payload, t.total_supply);
+        buf_write_u64(payload, t.minted_supply);
+        buf_write_u64(payload, t.staked_supply);
+        buf_write_u64(payload, t.burned_supply);
+        buf_write_u32(payload, t.annual_inflation_bps);
+        buf_write_u64(payload, t.current_epoch);
+        buf_write_bytes(payload, w.public_key.data(), 32);
+        buf_write_u64(payload, w.balance);
+        buf_write_u64(payload, w.staked_balance);
+        buf_write_u64(payload, w.locked_balance);
+        buf_write_u64(payload, w.nonce);
+
+        std::vector<uint8_t> out;
+        FileHeader::write(out, kFileState, payload.data(), (uint32_t)payload.size());
+        return write_file(storage_cfg.chain_dir + "/state.dat", out.data(), out.size());
+    }
+
+    bool load_state(Tokenomics& t, Wallet& w) {
+        std::vector<uint8_t> buf;
+        if (!read_file(storage_cfg.chain_dir + "/state.dat", buf)) return false;
+        auto hdr = FileHeader::read(buf.data(), buf.size());
+        if (hdr.magic != kFileMagic || hdr.type != kFileState) return false;
+        size_t off = 12;
+        t.total_supply = buf_read_u64(buf.data(), off, buf.size());
+        t.minted_supply = buf_read_u64(buf.data(), off, buf.size());
+        t.staked_supply = buf_read_u64(buf.data(), off, buf.size());
+        t.burned_supply = buf_read_u64(buf.data(), off, buf.size());
+        t.annual_inflation_bps = buf_read_u32(buf.data(), off, buf.size());
+        t.current_epoch = buf_read_u64(buf.data(), off, buf.size());
+        auto pk = buf_read_bytes(buf.data(), off, buf.size());
+        if (pk.size() >= 32) memcpy(w.public_key.data(), pk.data(), 32);
+        w.balance = buf_read_u64(buf.data(), off, buf.size());
+        w.staked_balance = buf_read_u64(buf.data(), off, buf.size());
+        w.locked_balance = buf_read_u64(buf.data(), off, buf.size());
+        w.nonce = buf_read_u64(buf.data(), off, buf.size());
+        return true;
+    }
 };

@@ -22,6 +22,7 @@ enum MsgType : uint8_t {
     kMsgSyncRequest = 13,
     kMsgSyncResponse = 14,
     kMsgError = 15,
+    kMsgTransaction = 16,
 };
 
 struct HandshakePayload {

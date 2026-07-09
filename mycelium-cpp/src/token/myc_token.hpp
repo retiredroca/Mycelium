@@ -5,6 +5,7 @@
 #include <array>
 #include <unordered_map>
 #include "crypto/myc_crypto.hpp"
+#include "storage/myc_storage.hpp"
 
 static inline constexpr uint64_t kTotalSupply = 1'000'000'000;
 static inline constexpr uint8_t kDecimals = 6;
@@ -273,4 +274,149 @@ struct Transaction {
             *reinterpret_cast<const std::array<uint8_t, 32>*>(&private_key));
         signature.assign(sig.begin(), sig.end());
     }
+
+    std::array<uint8_t, 32> tx_hash() const {
+        Sha256Ctx ctx;
+        sha256_init(&ctx);
+        sha256_update(&ctx, (const uint8_t*)tx_id.data(), tx_id.size());
+        sha256_update(&ctx, from.data(), 32);
+        sha256_update(&ctx, to.data(), 32);
+        sha256_update(&ctx, (const uint8_t*)&amount, sizeof(amount));
+        sha256_update(&ctx, (const uint8_t*)&fee, sizeof(fee));
+        sha256_update(&ctx, (const uint8_t*)&timestamp, sizeof(timestamp));
+        std::array<uint8_t, 32> h;
+        sha256_final(&ctx, h.data());
+        return h;
+    }
 };
+
+static inline void tx_serialize(const Transaction& tx, std::vector<uint8_t>& out) {
+    buf_write_str(out, tx.tx_id);
+    out.insert(out.end(), tx.from.begin(), tx.from.end());
+    out.insert(out.end(), tx.to.begin(), tx.to.end());
+    buf_write_u64(out, tx.amount);
+    buf_write_u64(out, tx.fee);
+    buf_write_u64(out, (uint64_t)tx.timestamp);
+    buf_write_bytes(out, tx.signature.data(), (uint32_t)tx.signature.size());
+    out.push_back((uint8_t)tx.status);
+}
+
+static inline Transaction tx_deserialize(const uint8_t* data, size_t& off, size_t len) {
+    Transaction tx;
+    tx.tx_id = buf_read_str(data, off, len);
+    if (off + 64 <= len) {
+        memcpy(tx.from.data(), data + off, 32); off += 32;
+        memcpy(tx.to.data(), data + off, 32); off += 32;
+    }
+    tx.amount = buf_read_u64(data, off, len);
+    tx.fee = buf_read_u64(data, off, len);
+    tx.timestamp = (int64_t)buf_read_u64(data, off, len);
+    tx.signature = buf_read_bytes(data, off, len);
+    if (off < len) tx.status = (TxStatus)data[off++];
+    return tx;
+}
+
+static inline std::array<uint8_t, 32> calc_merkle_root(const std::vector<Transaction>& txs) {
+    if (txs.empty()) return {};
+    std::vector<std::array<uint8_t, 32>> hashes;
+    hashes.reserve(txs.size());
+    for (auto& tx : txs) {
+        auto h = tx.tx_hash();
+        hashes.push_back(h);
+    }
+    while (hashes.size() > 1) {
+        std::vector<std::array<uint8_t, 32>> next;
+        next.reserve((hashes.size() + 1) / 2);
+        for (size_t i = 0; i < hashes.size(); i += 2) {
+            Sha256Ctx ctx;
+            sha256_init(&ctx);
+            sha256_update(&ctx, hashes[i].data(), 32);
+            if (i + 1 < hashes.size())
+                sha256_update(&ctx, hashes[i+1].data(), 32);
+            else
+                sha256_update(&ctx, hashes[i].data(), 32);
+            std::array<uint8_t, 32> h;
+            sha256_final(&ctx, h.data());
+            next.push_back(h);
+        }
+        hashes = next;
+    }
+    return hashes[0];
+}
+
+struct Block {
+    std::array<uint8_t, 32> prev_hash = {};
+    std::array<uint8_t, 32> merkle_root = {};
+    int64_t timestamp = 0;
+    uint64_t nonce = 0;
+    uint64_t epoch = 0;
+    std::array<uint8_t, 32> miner_pubkey = {};
+    std::vector<Transaction> txs;
+    std::vector<uint8_t> signature;
+
+    std::array<uint8_t, 32> calc_hash() const {
+        Sha256Ctx ctx;
+        sha256_init(&ctx);
+        sha256_update(&ctx, prev_hash.data(), 32);
+        sha256_update(&ctx, merkle_root.data(), 32);
+        sha256_update(&ctx, (const uint8_t*)&timestamp, sizeof(timestamp));
+        sha256_update(&ctx, (const uint8_t*)&nonce, sizeof(nonce));
+        sha256_update(&ctx, (const uint8_t*)&epoch, sizeof(epoch));
+        sha256_update(&ctx, miner_pubkey.data(), 32);
+        std::array<uint8_t, 32> h;
+        sha256_final(&ctx, h.data());
+        return h;
+    }
+
+    std::string block_id() const {
+        auto h = calc_hash();
+        return base64_encode(h.data(), 16);
+    }
+};
+
+static inline void block_serialize(const Block& block, std::vector<uint8_t>& out) {
+    out.insert(out.end(), block.prev_hash.begin(), block.prev_hash.end());
+    out.insert(out.end(), block.merkle_root.begin(), block.merkle_root.end());
+    buf_write_u64(out, (uint64_t)block.timestamp);
+    buf_write_u64(out, block.nonce);
+    buf_write_u64(out, block.epoch);
+    out.insert(out.end(), block.miner_pubkey.begin(), block.miner_pubkey.end());
+    buf_write_bytes(out, block.signature.data(), (uint32_t)block.signature.size());
+    uint32_t num_txs = (uint32_t)block.txs.size();
+    buf_write_u32(out, num_txs);
+    for (auto& tx : block.txs) {
+        tx_serialize(tx, out);
+    }
+}
+
+static inline Block block_deserialize(const uint8_t* data, size_t& off, size_t len) {
+    Block block;
+    if (off + 32 <= len) { memcpy(block.prev_hash.data(), data + off, 32); off += 32; }
+    if (off + 32 <= len) { memcpy(block.merkle_root.data(), data + off, 32); off += 32; }
+    block.timestamp = (int64_t)buf_read_u64(data, off, len);
+    block.nonce = buf_read_u64(data, off, len);
+    block.epoch = buf_read_u64(data, off, len);
+    if (off + 32 <= len) { memcpy(block.miner_pubkey.data(), data + off, 32); off += 32; }
+    block.signature = buf_read_bytes(data, off, len);
+    uint32_t num_txs = buf_read_u32(data, off, len);
+    for (uint32_t i = 0; i < num_txs; ++i)
+        block.txs.push_back(tx_deserialize(data, off, len));
+    return block;
+}
+
+static inline uint64_t block_mining_search(Block& block, uint64_t max_nonce) {
+    uint32_t target_bits = mining_difficulty_bits(block.epoch);
+    for (uint64_t n = 0; n < max_nonce; ++n) {
+        block.nonce = n;
+        auto hash = block.calc_hash();
+        uint32_t leading = 0;
+        for (int i = 0; i < 32; ++i) {
+            if (hash[i] == 0) { leading += 8; continue; }
+            uint8_t b = hash[i];
+            while ((b & 0x80) == 0) { ++leading; b <<= 1; }
+            break;
+        }
+        if (leading >= target_bits) return n;
+    }
+    return UINT64_MAX;
+}

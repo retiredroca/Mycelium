@@ -5,6 +5,7 @@
 #include <optional>
 #include "crypto/myc_crypto.hpp"
 #include "protocol/myc_protocol.hpp"
+#include "storage/myc_storage.hpp"
 #include "media/myc_video.hpp"
 
 static inline constexpr double kHypedThreshold = 1000.0;
@@ -150,6 +151,76 @@ static inline const char* post_strerror(PostErr e) {
         case kPostDecryptionFailed: return "decryption failed";
         default: return "unknown";
     }
+}
+
+// ============================================================
+// Post serialize/deserialize
+// ============================================================
+static inline void post_serialize(const Post& p, std::vector<uint8_t>& out) {
+    std::vector<uint8_t> payload;
+    buf_write_str(payload, p.id);
+    buf_write_str(payload, p.author);
+    buf_write_bytes(payload, p.author_public_key.data(), (uint32_t)p.author_public_key.size());
+    buf_write_str(payload, p.content.text);
+    buf_write_u32(payload, (uint32_t)p.content.media_cids.size());
+    for (auto& c : p.content.media_cids) buf_write_str(payload, c);
+    buf_write_u32(payload, (uint32_t)p.content.mentions.size());
+    for (auto& m : p.content.mentions) buf_write_str(payload, m);
+    buf_write_str(payload, p.content.video_cid);
+    buf_write_u64(payload, (uint64_t)p.created_at);
+    buf_write_u64(payload, p.ttl_seconds);
+    buf_write_double(payload, p.engagement_score);
+    buf_write_u64(payload, p.view_count);
+    buf_write_u64(payload, p.share_count);
+    buf_write_u64(payload, p.comment_count);
+    buf_write_u32(payload, p.is_permanent ? 1 : 0);
+    buf_write_u64(payload, p.staked_tokens);
+    buf_write_str(payload, p.signature.algorithm);
+    buf_write_bytes(payload, p.signature.signature_bytes.data(), (uint32_t)p.signature.signature_bytes.size());
+    buf_write_bytes(payload, p.signature.public_key.data(), (uint32_t)p.signature.public_key.size());
+    buf_write_u32(payload, p.encryption.enabled ? 1 : 0);
+    buf_write_str(payload, p.encryption.algorithm);
+    buf_write_str(payload, p.encryption.key_type);
+    buf_write_u64(payload, (uint64_t)p.encryption.encrypted_at);
+
+    FileHeader::write(out, kFilePost, payload.data(), (uint32_t)payload.size());
+}
+
+static inline bool post_deserialize(const uint8_t* data, size_t len, Post& p) {
+    auto hdr = FileHeader::read(data, len);
+    if (hdr.magic != kFileMagic || hdr.type != kFilePost) return false;
+    size_t off = 12;
+
+    p.id = buf_read_str(data, off, len);
+    p.author = buf_read_str(data, off, len);
+    p.author_public_key = buf_read_bytes(data, off, len);
+    p.content.text = buf_read_str(data, off, len);
+
+    uint32_t mc = buf_read_u32(data, off, len);
+    p.content.media_cids.clear();
+    for (uint32_t i = 0; i < mc; ++i) p.content.media_cids.push_back(buf_read_str(data, off, len));
+
+    uint32_t mn = buf_read_u32(data, off, len);
+    p.content.mentions.clear();
+    for (uint32_t i = 0; i < mn; ++i) p.content.mentions.push_back(buf_read_str(data, off, len));
+
+    p.content.video_cid = buf_read_str(data, off, len);
+    p.created_at = (int64_t)buf_read_u64(data, off, len);
+    p.ttl_seconds = buf_read_u64(data, off, len);
+    p.engagement_score = buf_read_double(data, off, len);
+    p.view_count = buf_read_u64(data, off, len);
+    p.share_count = buf_read_u64(data, off, len);
+    p.comment_count = buf_read_u64(data, off, len);
+    p.is_permanent = buf_read_u32(data, off, len) != 0;
+    p.staked_tokens = buf_read_u64(data, off, len);
+    p.signature.algorithm = buf_read_str(data, off, len);
+    p.signature.signature_bytes = buf_read_bytes(data, off, len);
+    p.signature.public_key = buf_read_bytes(data, off, len);
+    p.encryption.enabled = buf_read_u32(data, off, len) != 0;
+    p.encryption.algorithm = buf_read_str(data, off, len);
+    p.encryption.key_type = buf_read_str(data, off, len);
+    p.encryption.encrypted_at = (int64_t)buf_read_u64(data, off, len);
+    return true;
 }
 
 static inline uint64_t calculate_ttl_extension(const Post& post) {

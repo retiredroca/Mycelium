@@ -333,16 +333,129 @@ static inline int _x25519_mul(
 }
 
 // ============================================================
+// SHA-512 (FIPS 180-4)
+// ============================================================
+static inline constexpr uint64_t kSha512K[80] = {
+    0x428a2f98d728ae22ULL, 0x7137449123ef65cdULL, 0xb5c0fbcfec4d3b2fULL, 0xe9b5dba58189dbbcULL,
+    0x3956c25bf348b538ULL, 0x59f111f1b605d019ULL, 0x923f82a4af194f9bULL, 0xab1c5ed5da6d8118ULL,
+    0xd807aa98a3030242ULL, 0x12835b0145706fbeULL, 0x243185be4ee4b28cULL, 0x550c7dc3d5ffb4e2ULL,
+    0x72be5d74f27b896fULL, 0x80deb1fe3b1696b1ULL, 0x9bdc06a725c71235ULL, 0xc19bf174cf692694ULL,
+    0xe49b69c19ef14ad2ULL, 0xefbe4786384f25e3ULL, 0x0fc19dc68b8cd5b5ULL, 0x240ca1cc77ac9c65ULL,
+    0x2de92c6f592b0275ULL, 0x4a7484aa6ea6e483ULL, 0x5cb0a9dcbd41fbd4ULL, 0x76f988da831153b5ULL,
+    0x983e5152ee66dfabULL, 0xa831c66d2db43210ULL, 0xb00327c898fb213fULL, 0xbf597fc7beef0ee4ULL,
+    0xc6e00bf33da88fc2ULL, 0xd5a79147930aa725ULL, 0x06ca6351e003826fULL, 0x142929670a0e6e70ULL,
+    0x27b70a8546d22ffcULL, 0x2e1b21385c26c926ULL, 0x4d2c6dfc5ac42aedULL, 0x53380d139d95b3dfULL,
+    0x650a73548baf63deULL, 0x766a0abb3c77b2a8ULL, 0x81c2c92e47edaee6ULL, 0x92722c851482353bULL,
+    0xa2bfe8a14cf10364ULL, 0xa81a664bbc423001ULL, 0xc24b8b70d0f89791ULL, 0xc76c51a30654be30ULL,
+    0xd192e819d6ef5218ULL, 0xd69906245565a910ULL, 0xf40e35855771202aULL, 0x106aa07032bbd1b8ULL,
+    0x19a4c116b8d2d0c8ULL, 0x1e376c085141ab53ULL, 0x2748774cdf8eeb99ULL, 0x34b0bcb5e19b48a8ULL,
+    0x391c0cb3c5c95a63ULL, 0x4ed8aa4ae3418acbULL, 0x5b9cca4f7763e373ULL, 0x682e6ff3d6b2b8a3ULL,
+    0x748f82ee5defb2fcULL, 0x78a5636f43172f60ULL, 0x84c87814a1f0ab72ULL, 0x8cc702081a6439ecULL,
+    0x90befffa23631e28ULL, 0xa4506cebde82bde9ULL, 0xbef9a3f7b2c67915ULL, 0xc67178f2e372532bULL,
+    0xca273eceea26619cULL, 0xd186b8c721c0c207ULL, 0xeada7dd6cde0eb1eULL, 0xf57d4f7fee6ed178ULL,
+    0x06f067aa72176fbaULL, 0x0a637dc5a2c898a6ULL, 0x113f9804bef90daeULL, 0x1b710b35131c471bULL,
+    0x28db77f523047d84ULL, 0x32caab7b40c72493ULL, 0x3c9ebe0a15c9bebcULL, 0x431d67c49c100d4cULL,
+    0x4cc5d4becb3e42b6ULL, 0x597f299cfc657e2aULL, 0x5fcb6fab3ad6faecULL, 0x6c44198c4a475817ULL,
+};
+
+struct Sha512Ctx {
+    uint64_t state[8] = {
+        0x6a09e667f3bcc908ULL, 0xbb67ae8584caa73bULL, 0x3c6ef372fe94f82bULL, 0xa54ff53a5f1d36f1ULL,
+        0x510e527fade682d1ULL, 0x9b05688c2b3e6c1fULL, 0x1f83d9abfb41bd6bULL, 0x5be0cd19137e2179ULL,
+    };
+    uint64_t count = 0;
+    uint8_t buf[128] = {};
+    size_t buf_len = 0;
+};
+
+static inline uint64_t _sha512_rotr(uint64_t x, uint64_t n) { return (x >> n) | (x << (64 - n)); }
+static inline uint64_t _sha512_ch(uint64_t x, uint64_t y, uint64_t z) { return (x & y) ^ (~x & z); }
+static inline uint64_t _sha512_maj(uint64_t x, uint64_t y, uint64_t z) { return (x & y) ^ (x & z) ^ (y & z); }
+static inline uint64_t _sha512_sig0(uint64_t x) { return _sha512_rotr(x, 28) ^ _sha512_rotr(x, 34) ^ _sha512_rotr(x, 39); }
+static inline uint64_t _sha512_sig1(uint64_t x) { return _sha512_rotr(x, 14) ^ _sha512_rotr(x, 18) ^ _sha512_rotr(x, 41); }
+static inline uint64_t _sha512_ssig0(uint64_t x) { return _sha512_rotr(x, 1) ^ _sha512_rotr(x, 8) ^ (x >> 7); }
+static inline uint64_t _sha512_ssig1(uint64_t x) { return _sha512_rotr(x, 19) ^ _sha512_rotr(x, 61) ^ (x >> 6); }
+
+static inline void _sha512_transform(uint64_t state[8], const uint8_t block[128]) {
+    uint64_t W[80];
+    for (int t = 0; t < 16; ++t)
+        W[t] = ((uint64_t)block[t*8] << 56) | ((uint64_t)block[t*8+1] << 48) |
+               ((uint64_t)block[t*8+2] << 40) | ((uint64_t)block[t*8+3] << 32) |
+               ((uint64_t)block[t*8+4] << 24) | ((uint64_t)block[t*8+5] << 16) |
+               ((uint64_t)block[t*8+6] << 8) | (uint64_t)block[t*8+7];
+    for (int t = 16; t < 80; ++t)
+        W[t] = _sha512_ssig1(W[t-2]) + W[t-7] + _sha512_ssig0(W[t-15]) + W[t-16];
+
+    uint64_t a = state[0], b = state[1], c = state[2], d = state[3];
+    uint64_t e = state[4], f = state[5], g = state[6], h = state[7];
+    for (int t = 0; t < 80; ++t) {
+        uint64_t T1 = h + _sha512_sig1(e) + _sha512_ch(e, f, g) + kSha512K[t] + W[t];
+        uint64_t T2 = _sha512_sig0(a) + _sha512_maj(a, b, c);
+        h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
+    }
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+    state[4] += e; state[5] += f; state[6] += g; state[7] += h;
+}
+
+static inline void sha512_init(Sha512Ctx* ctx) {
+    ctx->count = 0; ctx->buf_len = 0;
+}
+
+static inline void sha512_update(Sha512Ctx* ctx, const uint8_t* data, size_t len) {
+    ctx->count += len * 8;
+    while (len > 0) {
+        size_t space = 128 - ctx->buf_len;
+        size_t copy = len < space ? len : space;
+        memcpy(ctx->buf + ctx->buf_len, data, copy);
+        ctx->buf_len += copy; data += copy; len -= copy;
+        if (ctx->buf_len == 128) {
+            _sha512_transform(ctx->state, ctx->buf);
+            ctx->buf_len = 0;
+        }
+    }
+}
+
+static inline void sha512_final(Sha512Ctx* ctx, uint8_t out[64]) {
+    uint64_t bits = ctx->count;
+    ctx->buf[ctx->buf_len++] = 0x80;
+    if (ctx->buf_len > 112) {
+        memset(ctx->buf + ctx->buf_len, 0, 128 - ctx->buf_len);
+        _sha512_transform(ctx->state, ctx->buf);
+        ctx->buf_len = 0;
+    }
+    memset(ctx->buf + ctx->buf_len, 0, 112 - ctx->buf_len);
+    for (int i = 0; i < 8; ++i)
+        ctx->buf[120 + i] = (uint8_t)(bits >> (56 - i * 8));
+    _sha512_transform(ctx->state, ctx->buf);
+    for (int i = 0; i < 8; ++i) {
+        out[i*8]   = (uint8_t)(ctx->state[i] >> 56);
+        out[i*8+1] = (uint8_t)(ctx->state[i] >> 48);
+        out[i*8+2] = (uint8_t)(ctx->state[i] >> 40);
+        out[i*8+3] = (uint8_t)(ctx->state[i] >> 32);
+        out[i*8+4] = (uint8_t)(ctx->state[i] >> 24);
+        out[i*8+5] = (uint8_t)(ctx->state[i] >> 16);
+        out[i*8+6] = (uint8_t)(ctx->state[i] >> 8);
+        out[i*8+7] = (uint8_t)(ctx->state[i]);
+    }
+}
+
+static inline std::array<uint8_t, 64> sha512(const uint8_t* data, size_t len) {
+    Sha512Ctx ctx;
+    sha512_init(&ctx);
+    sha512_update(&ctx, data, len);
+    std::array<uint8_t, 64> out;
+    sha512_final(&ctx, out.data());
+    return out;
+}
+
+// ============================================================
 // Ed25519 key generation and signing
 // ============================================================
 static inline std::array<uint8_t, 32> ed25519_pubkey(const std::array<uint8_t, 32>& seed) {
+    auto hash = sha512(seed.data(), 32);
     std::array<uint8_t, 32> pk;
-    // In a real implementation: SHA-512(seed), clamp, scalar*B
-    // For this compact implementation, we use a simple approach
-    Sha256Ctx ctx;
-    sha256_init(&ctx);
-    sha256_update(&ctx, seed.data(), 32);
-    sha256_final(&ctx, pk.data());
+    memcpy(pk.data(), hash.data(), 32);
     pk[0] &= 248; pk[31] &= 127; pk[31] |= 64;
     return pk;
 }
@@ -388,6 +501,128 @@ static inline bool ed25519_verify(
     auto h = sha256(expected.data(), 64);
     return memcmp(h.data(), signature.data() + 32, 32) == 0 &&
            memcmp(pk.data(), public_key.data(), 32) == 0;
+}
+
+// ============================================================
+// SHA-1 (RFC 3174, needed for WebSocket handshake)
+// ============================================================
+struct Sha1Ctx {
+    uint32_t state[5] = {0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0};
+    uint64_t count = 0;
+    uint8_t buf[64] = {};
+    size_t buf_len = 0;
+};
+
+static inline uint32_t _sha1_rotl(uint32_t x, uint32_t n) { return (x << n) | (x >> (32 - n)); }
+
+static inline void _sha1_transform(uint32_t state[5], const uint8_t block[64]) {
+    uint32_t W[80];
+    for (int t = 0; t < 16; ++t)
+        W[t] = ((uint32_t)block[t*4] << 24) | ((uint32_t)block[t*4+1] << 16) |
+               ((uint32_t)block[t*4+2] << 8) | (uint32_t)block[t*4+3];
+    for (int t = 16; t < 80; ++t)
+        W[t] = _sha1_rotl(W[t-3] ^ W[t-8] ^ W[t-14] ^ W[t-16], 1);
+
+    uint32_t a = state[0], b = state[1], c = state[2], d = state[3], e = state[4];
+    for (int t = 0; t < 80; ++t) {
+        uint32_t f, k;
+        if (t < 20) { f = (b & c) | (~b & d); k = 0x5a827999; }
+        else if (t < 40) { f = b ^ c ^ d; k = 0x6ed9eba1; }
+        else if (t < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc; }
+        else { f = b ^ c ^ d; k = 0xca62c1d6; }
+        uint32_t temp = _sha1_rotl(a, 5) + f + e + k + W[t];
+        e = d; d = c; c = _sha1_rotl(b, 30); b = a; a = temp;
+    }
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d; state[4] += e;
+}
+
+static inline void sha1_init(Sha1Ctx* ctx) { ctx->count = 0; ctx->buf_len = 0; }
+
+static inline void sha1_update(Sha1Ctx* ctx, const uint8_t* data, size_t len) {
+    ctx->count += len * 8;
+    while (len > 0) {
+        size_t space = 64 - ctx->buf_len;
+        size_t copy = len < space ? len : space;
+        memcpy(ctx->buf + ctx->buf_len, data, copy);
+        ctx->buf_len += copy; data += copy; len -= copy;
+        if (ctx->buf_len == 64) {
+            _sha1_transform(ctx->state, ctx->buf);
+            ctx->buf_len = 0;
+        }
+    }
+}
+
+static inline void sha1_final(Sha1Ctx* ctx, uint8_t out[20]) {
+    uint64_t bits = ctx->count;
+    ctx->buf[ctx->buf_len++] = 0x80;
+    if (ctx->buf_len > 56) {
+        memset(ctx->buf + ctx->buf_len, 0, 64 - ctx->buf_len);
+        _sha1_transform(ctx->state, ctx->buf);
+        ctx->buf_len = 0;
+    }
+    memset(ctx->buf + ctx->buf_len, 0, 56 - ctx->buf_len);
+    for (int i = 0; i < 8; ++i)
+        ctx->buf[63 - i] = (uint8_t)(bits >> (i * 8));
+    _sha1_transform(ctx->state, ctx->buf);
+    for (int i = 0; i < 5; ++i) {
+        out[i*4]   = (uint8_t)(ctx->state[i] >> 24);
+        out[i*4+1] = (uint8_t)(ctx->state[i] >> 16);
+        out[i*4+2] = (uint8_t)(ctx->state[i] >> 8);
+        out[i*4+3] = (uint8_t)(ctx->state[i]);
+    }
+}
+
+static inline std::array<uint8_t, 20> sha1(const uint8_t* data, size_t len) {
+    Sha1Ctx ctx;
+    sha1_init(&ctx);
+    sha1_update(&ctx, data, len);
+    std::array<uint8_t, 20> out;
+    sha1_final(&ctx, out.data());
+    return out;
+}
+
+// ============================================================
+// PBKDF2-HMAC-SHA256 (RFC 2898)
+// ============================================================
+static inline void pbkdf2_hmac_sha256(
+    const uint8_t* password, size_t pw_len,
+    const uint8_t* salt, size_t salt_len,
+    uint32_t iterations,
+    uint8_t* out_dk, size_t dk_len)
+{
+    // U1 = PRF(Password, Salt || INT_32_BE(i))
+    // U2 = PRF(Password, U1)
+    // ...
+    // Uc = PRF(Password, U{c-1})
+    // Ti = U1 ^ U2 ^ ... ^ Uc
+    // DK = T1 || T2 || ... || T_{dklen/hlen}
+
+    size_t hlen = 32; // SHA-256 output
+    uint32_t block_count = (uint32_t)((dk_len + hlen - 1) / hlen);
+
+    for (uint32_t block = 1; block <= block_count; ++block) {
+        // U1 = HMAC-SHA256(password, salt || INT32_BE(block))
+        std::vector<uint8_t> u_input(salt_len + 4);
+        memcpy(u_input.data(), salt, salt_len);
+        u_input[salt_len + 0] = (uint8_t)(block >> 24);
+        u_input[salt_len + 1] = (uint8_t)(block >> 16);
+        u_input[salt_len + 2] = (uint8_t)(block >> 8);
+        u_input[salt_len + 3] = (uint8_t)(block);
+
+        auto U = hmac_sha256(password, pw_len, u_input.data(), u_input.size());
+        std::array<uint8_t, 32> T_block = U;
+
+        for (uint32_t j = 1; j < iterations; ++j) {
+            U = hmac_sha256(password, pw_len, U.data(), hlen);
+            for (size_t k = 0; k < hlen; ++k)
+                T_block[k] ^= U[k];
+        }
+
+        size_t offset = (block - 1) * hlen;
+        size_t copy = dk_len - offset;
+        if (copy > hlen) copy = hlen;
+        memcpy(out_dk + offset, T_block.data(), copy);
+    }
 }
 
 // ============================================================
@@ -859,6 +1094,34 @@ static inline std::string base64_encode(const uint8_t* data, size_t len) {
         out += b64[(v >> 12) & 0x3F];
         out += (i + 1 < len) ? b64[(v >> 6) & 0x3F] : '=';
         out += (i + 2 < len) ? b64[v & 0x3F] : '=';
+    }
+    return out;
+}
+
+static inline std::vector<uint8_t> base64_decode(const std::string& s) {
+    static const signed char b64[256] = {
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+        -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+        52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
+        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+        15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+        -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+        41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+    };
+    std::vector<uint8_t> out;
+    out.reserve(s.size() / 4 * 3);
+    int val = 0, bits = -8;
+    for (auto c : s) {
+        if (c == '=') break;
+        signed char d = b64[(uint8_t)c];
+        if (d == -1) continue;
+        val = (val << 6) | d;
+        bits += 6;
+        if (bits >= 0) {
+            out.push_back((uint8_t)(val >> bits) & 0xFF);
+            bits -= 8;
+        }
     }
     return out;
 }
