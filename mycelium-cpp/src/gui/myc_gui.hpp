@@ -14,6 +14,10 @@
 #include <commctrl.h>
 #pragma comment(lib, "ws2_32")
 #pragma comment(lib, "comctl32")
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 #endif
 
 enum {
@@ -260,6 +264,30 @@ static inline void gui_http_server_thread(uint16_t port) {
     }
     closesocket(server_fd);
     gui_log("[HTTP] Server stopped\r\n");
+#else
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        gui_log("[HTTP] socket() failed\n");
+        return;
+    }
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        gui_log("[HTTP] bind() failed (port %u in use?)\n", port);
+        close(server_fd);
+        return;
+    }
+    listen(server_fd, SOMAXCONN);
+    gui_log("[HTTP] Listening on port %u\n", port);
+    while (g_state.node_running) {
+        int client = accept(server_fd, nullptr, nullptr);
+        if (client < 0) break;
+        serve_http_page((uintptr_t)client);
+    }
+    close(server_fd);
+    gui_log("[HTTP] Server stopped\n");
 #endif
 }
 

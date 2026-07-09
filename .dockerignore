@@ -1,0 +1,12 @@
+.git/
+.gitignore
+.github/
+docs/
+*.md
+LICENSE
+build/
+__pycache__/
+*.pyc
+.env
+oc.sh
+target/

@@ -238,6 +238,29 @@ When combined with `--tor`, the node also displays the `.onion` web URL for priv
 
 An **interactive Terminal UI** is also available (`mycelium no-gui` or `mycelium start`) with full keyboard-driven wallet, mining, and console views.
 
+## Docker
+
+```bash
+# Build and run with Docker Compose (bootstrap peer + node)
+docker compose up -d
+
+# Or build and run manually
+docker build -t mycelium .
+docker run -p 8080:8080 -p 18028:18028 mycelium start --http-port 8080 --listen /ip4/0.0.0.0/tcp/18028
+```
+
+A multi-stage `Dockerfile` builds the binary in an Ubuntu 22.04 builder image and copies it to a minimal runtime image. The image links against OpenSSL for AES-256-GCM on Linux.
+
+## Proxmox
+
+An automated script creates a Proxmox LXC container:
+
+```bash
+bash proxmox/create-mycelium-ct.sh [CT_ID] [HOSTNAME]
+```
+
+The script downloads the Ubuntu 22.04 template, creates a container (4 GB disk, 512 MB RAM), installs build dependencies, clones and builds Mycelium, and registers it as a systemd service.
+
 ## Security
 
 ### Quantum-Resistant Cryptography
@@ -316,9 +339,16 @@ mytube/
 │       └── p2p/
 │           └── myc_p2p.hpp                   # Peer table, gossip, node
 │
+├── proxmox/
+│   ├── create-mycelium-ct.sh                 # Proxmox LXC container creation
+│   └── README.md                             # Proxmox deployment guide
+│
 ├── docs/
 │   └── architecture.md                       # Architecture diagrams
 │
+├── Dockerfile                                 # Multi-stage Docker build
+├── docker-compose.yml                         # Docker Compose (bootstrap + node)
+├── .dockerignore
 ├── README.md                                  # This file
 ├── LICENSE                                    # MIT License
 └── CONTRIBUTING.md                            # Contribution guidelines
@@ -366,7 +396,7 @@ cmake -B build && cmake --build build --config Release
 
 | Phase | Timeline | Goals |
 |-------|----------|-------|
-| **Phase 1** | ✅ Completed | C++ port, core crypto, CLI, TUI, peer table, profile system, video hosting, embedded web UI, PoW mining, config system |
+| **Phase 1** | ✅ Completed | C++ port, core crypto, CLI, TUI, peer table, profile system, video hosting, embedded web UI, PoW mining, config system, Docker, Proxmox |
 | **Phase 2** | Current | Real TCP/UDP transport, Kademlia DHT, gossip protocol |
 | **Phase 3** | Future | Real liboqs integration (ML-KEM, SLH-DSA), encrypted storage |
 | **Phase 4** | Future | Token integration, staking, governance |

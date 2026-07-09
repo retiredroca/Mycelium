@@ -18,4 +18,7 @@ target_compile_definitions(mycelium PRIVATE MYCELIUM_VERSION="${MYCELIUM_BUILD_V
 
 if(WIN32)
     target_link_libraries(mycelium PRIVATE ws2_32 bcrypt)
+else()
+    find_package(OpenSSL REQUIRED)
+    target_link_libraries(mycelium PRIVATE OpenSSL::Crypto)
 endif()

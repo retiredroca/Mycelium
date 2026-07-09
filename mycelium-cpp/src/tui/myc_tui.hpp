@@ -19,6 +19,8 @@
 #include <termios.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <signal.h>
 #endif
 

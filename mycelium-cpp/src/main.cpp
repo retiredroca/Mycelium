@@ -23,6 +23,10 @@
 #include <winsock2.h>
 #include <windows.h>
 #pragma comment(lib, "ws2_32")
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 #endif
 
 // ============================================================

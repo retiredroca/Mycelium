@@ -16,6 +16,7 @@
 #pragma comment(lib, "ws2_32")
 #else
 #include <sys/random.h>
+#include <openssl/evp.h>
 #endif
 
 // ============================================================
@@ -659,19 +660,17 @@ static inline std::array<uint8_t, 32> x25519_shared_secret(
 }
 
 // ============================================================
-// AES-256-GCM via Win32 BCrypt
+// AES-256-GCM (Win32 BCrypt / Linux OpenSSL)
 // ============================================================
+#ifdef _WIN32
 struct AesGcmCtx {
     BCRYPT_ALG_HANDLE hAlg = nullptr;
     BCRYPT_KEY_HANDLE hKey = nullptr;
     uint8_t* key_obj = nullptr;
     size_t key_obj_len = 0;
-    uint8_t* tag = nullptr;
-    size_t tag_len = 0;
     bool ok = false;
 
     bool init(const uint8_t key[32]) {
-#ifdef _WIN32
         if (BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_AES_ALGORITHM, MS_PRIMITIVE_PROVIDER, 0) != 0)
             return false;
         if (BCryptSetProperty(hAlg, BCRYPT_CHAINING_MODE, (PUINT8)BCRYPT_CHAIN_MODE_GCM, sizeof(BCRYPT_CHAIN_MODE_GCM), 0) != 0)
@@ -684,26 +683,46 @@ struct AesGcmCtx {
 
         DWORD tag_len_val = 16;
         BCryptSetProperty(hAlg, BCRYPT_AUTH_TAG_LENGTH, (PUINT8)&tag_len_val, sizeof(tag_len_val), 0);
-        tag_len = 16;
 
         if (BCryptGenerateSymmetricKey(hAlg, &hKey, key_obj, obj_len, (PUINT8)key, 32, 0) != 0)
             return false;
         ok = true;
-#endif
         return ok;
     }
 
     ~AesGcmCtx() {
-#ifdef _WIN32
         if (hKey) BCryptDestroyKey(hKey);
         if (hAlg) BCryptCloseAlgorithmProvider(hAlg, 0);
         delete[] key_obj;
-#endif
     }
     AesGcmCtx() = default;
     AesGcmCtx(const AesGcmCtx&) = delete;
     AesGcmCtx& operator=(const AesGcmCtx&) = delete;
 };
+#else
+struct AesGcmCtx {
+    EVP_CIPHER_CTX* ctx = nullptr;
+
+    bool init(const uint8_t key[32]) {
+        ctx = EVP_CIPHER_CTX_new();
+        if (!ctx) return false;
+        if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1)
+            { EVP_CIPHER_CTX_free(ctx); ctx = nullptr; return false; }
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, 12, nullptr) != 1)
+            { EVP_CIPHER_CTX_free(ctx); ctx = nullptr; return false; }
+        if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, key, nullptr) != 1)
+            { EVP_CIPHER_CTX_free(ctx); ctx = nullptr; return false; }
+        return true;
+    }
+
+    ~AesGcmCtx() {
+        if (ctx) EVP_CIPHER_CTX_free(ctx);
+    }
+    AesGcmCtx() = default;
+    AesGcmCtx(const AesGcmCtx&) = delete;
+    AesGcmCtx& operator=(const AesGcmCtx&) = delete;
+};
+#endif
 
 static inline CryptoErr aes256gcm_encrypt(
     const uint8_t* plaintext, size_t pt_len,
@@ -734,9 +753,25 @@ static inline CryptoErr aes256gcm_encrypt(
     out_ciphertext.resize(result_len);
     return kCryptoOk;
 #else
-    (void)plaintext; (void)pt_len; (void)key; (void)nonce;
-    (void)out_ciphertext; (void)out_tag;
-    return kCryptoEncryptionFailed;
+    AesGcmCtx ctx;
+    if (!ctx.init(key)) return kCryptoEncryptionFailed;
+
+    if (EVP_EncryptInit_ex(ctx.ctx, nullptr, nullptr, nullptr, nonce) != 1)
+        return kCryptoEncryptionFailed;
+
+    out_ciphertext.resize(pt_len + 16);
+    int out_len = 0;
+    if (EVP_EncryptUpdate(ctx.ctx, out_ciphertext.data(), &out_len, plaintext, (int)pt_len) != 1)
+        return kCryptoEncryptionFailed;
+    int tmp_len = 0;
+    if (EVP_EncryptFinal_ex(ctx.ctx, out_ciphertext.data() + out_len, &tmp_len) != 1)
+        return kCryptoEncryptionFailed;
+    out_len += tmp_len;
+    out_ciphertext.resize((size_t)out_len);
+
+    if (EVP_CIPHER_CTX_ctrl(ctx.ctx, EVP_CTRL_GCM_GET_TAG, 16, out_tag) != 1)
+        return kCryptoEncryptionFailed;
+    return kCryptoOk;
 #endif
 }
 
@@ -769,9 +804,26 @@ static inline CryptoErr aes256gcm_decrypt(
     out_plaintext.resize(result_len);
     return kCryptoOk;
 #else
-    (void)ciphertext; (void)ct_len; (void)key; (void)nonce; (void)tag;
-    (void)out_plaintext;
-    return kCryptoDecryptionFailed;
+    AesGcmCtx ctx;
+    if (!ctx.init(key)) return kCryptoDecryptionFailed;
+
+    if (EVP_DecryptInit_ex(ctx.ctx, nullptr, nullptr, nullptr, nonce) != 1)
+        return kCryptoDecryptionFailed;
+
+    out_plaintext.resize(ct_len);
+    int out_len = 0;
+    if (EVP_DecryptUpdate(ctx.ctx, out_plaintext.data(), &out_len, ciphertext, (int)ct_len) != 1)
+        return kCryptoDecryptionFailed;
+
+    if (EVP_CIPHER_CTX_ctrl(ctx.ctx, EVP_CTRL_GCM_SET_TAG, 16, (void*)tag) != 1)
+        return kCryptoDecryptionFailed;
+
+    int tmp_len = 0;
+    int ret = EVP_DecryptFinal_ex(ctx.ctx, out_plaintext.data() + out_len, &tmp_len);
+    out_len += tmp_len;
+    out_plaintext.resize((size_t)out_len);
+    if (ret != 1) return kCryptoDecryptionFailed;
+    return kCryptoOk;
 #endif
 }
 

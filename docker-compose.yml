@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  bootstrap-peer:
+    build: .
+    ports:
+      - "18028:18028"
+    command: bootstrap-peer --listen /ip4/0.0.0.0/tcp/18028
+    restart: unless-stopped
+
+  node:
+    build: .
+    ports:
+      - "8080:8080"
+    depends_on:
+      - bootstrap-peer
+    command: start --http-port 8080 --listen /ip4/0.0.0.0/tcp/18029
+    restart: unless-stopped
+    volumes:
+      - mycelium-data:/home/mycelium
+
+volumes:
+  mycelium-data:
