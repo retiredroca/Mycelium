@@ -10,7 +10,6 @@
 #include <vector>
 #include <memory>
 #include <thread>
-#define MYCELIUM_VERSION "0.5.0"
 #include "crypto/myc_crypto.hpp"
 #include "crypto/myc_bip39.hpp"
 #include "protocol/myc_protocol.hpp"

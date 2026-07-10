@@ -16,6 +16,7 @@
 #include <windows.h>
 #include <conio.h>
 #else
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 #include <sys/select.h>

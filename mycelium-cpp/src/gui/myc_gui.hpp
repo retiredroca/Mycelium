@@ -56,6 +56,7 @@ enum {
     IDC_DLG_RESTORE      = 1108,
 };
 
+#ifdef _WIN32
 struct GuiData {
     HWND hwnd  = nullptr;
     int current_tab = 0;
@@ -1005,3 +1006,6 @@ static inline int gui_run() {
     }
     return 0;
 }
+#else
+static inline int gui_run() { return 0; }
+#endif
