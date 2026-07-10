@@ -15,9 +15,11 @@ add_executable(mycelium
 
 target_include_directories(mycelium PRIVATE src)
 
-if(NOT MYCELIUM_BUILD_VERSION)
-    set(MYCELIUM_BUILD_VERSION "0.01")
-endif()
+string(TIMESTAMP YY "%y")
+string(TIMESTAMP DOW "%w")
+string(TIMESTAMP WN "%V")
+set(MYCELIUM_BUILD_VERSION "0.1.${YY}.${DOW}.${WN}")
+message(STATUS "Building mycelium version: ${MYCELIUM_BUILD_VERSION}")
 target_compile_definitions(mycelium PRIVATE MYCELIUM_VERSION="${MYCELIUM_BUILD_VERSION}")
 
 # MSVC: suppress POSIX deprecation warnings (snprintf, fopen, strtok)

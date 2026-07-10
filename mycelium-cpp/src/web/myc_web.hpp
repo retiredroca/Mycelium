@@ -955,7 +955,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--te
 <div class="modal-box" id="modal-box" onclick="event.stopPropagation()"></div>
 </div>
 
-<script>
+<script>)HTML" R"HTML(
 let gProfile=null, gAllPosts=[], gAllProfiles=[], gSearchHistory=JSON.parse(localStorage.getItem('yt_history')||'[]');
 function $(id){return document.getElementById(id)}
 function hide(e){e.style.display='none'}
