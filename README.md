@@ -41,21 +41,26 @@ Zero external dependencies, no virtual dispatch, no async runtime, no garbage co
 
 ### Build
 
+**Prerequisites**: C++17 compiler (GCC 9+, Clang 10+), CMake 3.20+.  
+On Linux, also install `libssl-dev`.
+
 ```bash
 git clone https://github.com/retiredroca/Mycelium.git
 cd Mycelium/mycelium-cpp
-g++ -std=c++17 -O2 -Isrc src/main.cpp -o mycelium.exe -lws2_32 -lpthread -lbcrypt -lgdi32 -lcomctl32
-```
 
-Or with CMake:
-
-```bash
 cmake -B build
 cmake --build build --config Release
+
+# Run
 ./build/Release/mycelium status
 ```
 
-**Prerequisites**: C++17 compiler (MSVC 2022+, GCC 9+, Clang 10+), CMake 3.20+.
+**Direct GCC (no CMake)**:
+
+| Platform | Command |
+|----------|---------|
+| Windows  | `g++ -std=c++17 -O2 -Isrc src/main.cpp -o mycelium.exe -lws2_32 -lpthread -lbcrypt -lgdi32 -lcomctl32` |
+| Linux    | `g++ -std=c++17 -O2 -Isrc src/main.cpp -o mycelium -lssl -lcrypto -lpthread` |
 
 ### Start a Node
 

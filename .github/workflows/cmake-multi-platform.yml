@@ -33,6 +33,10 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Install dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
     - name: Compute version
       id: ver
       shell: bash
