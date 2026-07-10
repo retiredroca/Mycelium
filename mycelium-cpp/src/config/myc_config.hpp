@@ -181,7 +181,7 @@ static inline bool load_config_file(const std::string& path, MyceliumConfig& c) 
     if (sz <= 0) { fclose(f); return false; }
     fseek(f, 0, SEEK_SET);
     std::string buf((size_t)sz, '\0');
-    (void)fread(&buf[0], 1, (size_t)sz, f);
+    [[maybe_unused]] auto nread = fread(&buf[0], 1, (size_t)sz, f);
     fclose(f);
 
     const char* p = buf.c_str();

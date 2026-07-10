@@ -1164,11 +1164,7 @@ loadFeed();
 renderHistory();
 </script>
 </body>
-</html>)HTML",
-        peer_count,
-        height,
-        (unsigned long long)epoch,
-        (unsigned long long)reward);
+</html>)HTML");
     if (len > 0 && (size_t)len < sizeof(html))
         send_response(s, 200, "OK", "text/html; charset=utf-8", html, (size_t)len);
     else

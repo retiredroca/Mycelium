@@ -59,15 +59,14 @@ struct FileHeader {
     }
 
     static void write(std::vector<uint8_t>& out, uint16_t type, const uint8_t* payload, uint32_t sz) {
-        out.resize(12 + sz);
-        size_t off = 0;
-        out[off++] = 0x4D; out[off++] = 0x59; out[off++] = 0x43; // "MYC"
-        out[off++] = 0; // padding
-        out[off++] = 0; out[off++] = 1; // version 1
-        out[off++] = (uint8_t)(type >> 8); out[off++] = (uint8_t)type;
-        out[off++] = (uint8_t)(sz >> 24); out[off++] = (uint8_t)(sz >> 16);
-        out[off++] = (uint8_t)(sz >> 8); out[off++] = (uint8_t)sz;
-        if (sz > 0) memcpy(out.data() + 12, payload, sz);
+        out.reserve(12 + sz);
+        out.push_back(0x4D); out.push_back(0x59); out.push_back(0x43);
+        out.push_back(0);
+        out.push_back(0); out.push_back(1);
+        out.push_back((uint8_t)(type >> 8)); out.push_back((uint8_t)type);
+        out.push_back((uint8_t)(sz >> 24)); out.push_back((uint8_t)(sz >> 16));
+        out.push_back((uint8_t)(sz >> 8)); out.push_back((uint8_t)sz);
+        if (sz > 0) out.insert(out.end(), payload, payload + sz);
     }
 };
 
