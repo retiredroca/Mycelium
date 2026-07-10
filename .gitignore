@@ -80,5 +80,8 @@ keys/
 .DS_Store
 Thumbs.db
 
+# Windows reserved device name (accidental redirection artifact)
+nul
+
 # Local scripts
 oc.sh

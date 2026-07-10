@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <thread>
+#define MYCELIUM_VERSION "0.5.0"
 #include "crypto/myc_crypto.hpp"
 #include "crypto/myc_bip39.hpp"
 #include "protocol/myc_protocol.hpp"
@@ -32,12 +34,20 @@
 // ============================================================
 // Global state (single node) — defined before GUI include
 // ============================================================
+struct WalletEntry {
+    std::array<uint8_t, 32> private_key = {};
+    Wallet wallet;
+};
+
 struct AppState {
     Profile my_profile;
+    std::vector<Profile> profiles;
+    int active_profile = 0;
     SocialGraph social;
     Guestbook guestbook;
     UsernameRegistry identity;
     Wallet wallet;
+    std::vector<WalletEntry> wallet_store;
     Tokenomics tokenomics;
     MyceliumNode* node = nullptr;
     bool node_running = false;
@@ -167,6 +177,57 @@ static inline void handle_start_from_config() {
     g_state.node_running = true;
 }
 
+static inline void run_http_server(uint16_t port, bool is_mgmt) {
+    printf("  Starting HTTP server on port %u...\n", port);
+#ifdef _WIN32
+    SOCKET server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd == INVALID_SOCKET) {
+        printf("  Error: socket() failed\n");
+        return;
+    }
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        printf("  Error: bind() failed (port %u in use?)\n", port);
+        closesocket(server_fd);
+        return;
+    }
+    listen(server_fd, SOMAXCONN);
+    printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", port);
+    while (true) {
+        SOCKET client = accept(server_fd, nullptr, nullptr);
+        if (client == INVALID_SOCKET) break;
+        serve_http_page_ex((uintptr_t)client, is_mgmt);
+    }
+    closesocket(server_fd);
+#else
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        printf("  Error: socket() failed\n");
+        return;
+    }
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        printf("  Error: bind() failed (port %u in use?)\n", port);
+        close(server_fd);
+        return;
+    }
+    listen(server_fd, SOMAXCONN);
+    printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", port);
+    while (true) {
+        int client = accept(server_fd, nullptr, nullptr);
+        if (client < 0) break;
+        serve_http_page_ex((uintptr_t)client, is_mgmt);
+    }
+    close(server_fd);
+#endif
+}
+
 // ============================================================
 // Command handlers
 // ============================================================
@@ -218,60 +279,8 @@ static inline void handle_start(const char* listen_addr, const char* bootstrap,
     print_yt_sep();
 
     if (g_state.config.enable_http && g_state.config.http_port > 0) {
-        uint16_t port = g_state.config.http_port;
-        printf("\n  Starting HTTP server on port %u...\n", port);
-
-#ifdef _WIN32
-        SOCKET server_fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd == INVALID_SOCKET) {
-            printf("  Error: socket() failed\n");
-            return;
-        }
-        struct sockaddr_in addr;
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);
-        addr.sin_addr.s_addr = INADDR_ANY;
-        if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-            printf("  Error: bind() failed (port %u in use?)\n", port);
-            closesocket(server_fd);
-            return;
-        }
-        listen(server_fd, SOMAXCONN);
-        printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", port);
-        printf("  Press Ctrl+C to stop.\n\n");
-
-        while (g_state.node_running) {
-            SOCKET client = accept(server_fd, nullptr, nullptr);
-            if (client == INVALID_SOCKET) break;
-            serve_http_page((uintptr_t)client);
-        }
-        closesocket(server_fd);
-#else
-        int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0) {
-            printf("  Error: socket() failed\n");
-            return;
-        }
-        struct sockaddr_in addr;
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);
-        addr.sin_addr.s_addr = INADDR_ANY;
-        if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-            printf("  Error: bind() failed (port %u in use?)\n", port);
-            close(server_fd);
-            return;
-        }
-        listen(server_fd, SOMAXCONN);
-        printf("  Listening at \033[1mhttp://localhost:%u\033[0m\n", port);
-        printf("  Press Ctrl+C to stop.\n\n");
-
-        while (g_state.node_running) {
-            int client = accept(server_fd, nullptr, nullptr);
-            if (client < 0) break;
-            serve_http_page((uintptr_t)client);
-        }
-        close(server_fd);
-#endif
+        printf("\n");
+        run_http_server(g_state.config.http_port, false);
     }
 }
 
@@ -855,6 +864,7 @@ static inline void print_usage(const char* prog) {
     printf("    mine\n");
     printf("    gui [--config FILE]\n");
     printf("    tui [--config FILE] [--http-port PORT]\n");
+    printf("    webonly [--config FILE] [--http-port PORT] [--mgmt-port PORT]\n");
     printf("    config generate [--path FILE]\n");
     printf("    config show\n");
     printf("    social follow --user U\n");
@@ -930,6 +940,50 @@ int main(int argc, char** argv) {
         if (http_port == 0 && g_state.config.enable_http)
             http_port = g_state.config.http_port;
         return tui_run(http_port);
+    }
+
+    if (cmd == "webonly") {
+        uint16_t http_port = 0;
+        uint16_t mgmt_port = 0;
+        for (int i = cmd_idx + 1; i < argc; ++i) {
+            if (strcmp(argv[i], "--config") == 0 && i + 1 < argc) { if (!config_path) handle_config_load(argv[++i]); else ++i; }
+            else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) { if (!config_path) handle_config_load(argv[++i]); else ++i; }
+            else if (strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) http_port = (uint16_t)atoi(argv[++i]);
+            else if (strcmp(argv[i], "--mgmt-port") == 0 && i + 1 < argc) mgmt_port = (uint16_t)atoi(argv[++i]);
+        }
+        if (http_port == 0) {
+            if (g_state.config.enable_http) http_port = g_state.config.http_port;
+            else http_port = 8080;
+        }
+        if (mgmt_port == 0) mgmt_port = 8081;
+
+        handle_start_from_config();
+        print_yt_header("\xF0\x9F\x94\x8C", "MYTUBE WEB ONLY");
+        print_yt_line("Peer ID", g_state.node->local_peer_id().c_str());
+        char peers[32];
+        snprintf(peers, sizeof(peers), "%zu", g_state.node->peer_count());
+        print_yt_line("Peers", peers);
+        print_yt_sep();
+
+        printf("\n");
+        if (mgmt_port > 0) {
+            printf("  Management port: \033[1mhttp://localhost:%u\033[0m\n", mgmt_port);
+            printf("    (wallet, mining, node control)\n\n");
+        }
+        if (http_port > 0) {
+            printf("  Client port: \033[1mhttp://localhost:%u\033[0m\n", http_port);
+            printf("    (dashboard, content browsing)\n\n");
+        }
+        printf("  Press Ctrl+C to stop.\n\n");
+
+        std::thread mgmt_thread;
+        if (mgmt_port > 0)
+            mgmt_thread = std::thread(run_http_server, mgmt_port, true);
+        if (http_port > 0)
+            run_http_server(http_port, false);
+        if (mgmt_thread.joinable())
+            mgmt_thread.join();
+        return 0;
     }
 
     if (cmd == "config") {

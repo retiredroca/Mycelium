@@ -31,6 +31,26 @@ Every module is a single `static inline` header. The entire project builds in se
 - **Proof of Engagement**: Content visibility extends based on network interaction
 - **Zero Runtime Overhead**: No async, no GC, no virtual tables, no external heap frameworks
 
+## Screenshots
+
+### Web Client (YouTube-style landing page)
+
+![Web Client](webclient_screenshot_localhost.png)
+
+### Web Management Dashboard
+
+![Web Management 1](webmgmt_screenshot1_localhost.png)
+
+![Web Management 2](webmgmt_screenshot2_localhost.png)
+
+### Terminal UI
+
+![TUI](tui_screenshot_localhost.png)
+
+### Windows GUI
+
+![GUI](gui_screenshot_localhost.png)
+
 ## Architecture
 
 ```
@@ -152,6 +172,9 @@ Example: `feat: add mining stats; buildRC`
 
 # View current effective config
 ./build/Release/mycelium config show
+
+# Start web-only mode (no TUI/GUI)
+./build/Release/mycelium webonly --http-port 8080
 ```
 
 ## Video & Post Lifecycle
@@ -236,7 +259,16 @@ MyTube ships with an **interactive embedded web dashboard** served directly from
 
 When combined with `--tor`, the node also displays the `.onion` web URL for privacy-preserving remote access.
 
+![Web Client](webclient_screenshot_localhost.png)
+![Web Management](webmgmt_screenshot1_localhost.png)
+
 An **interactive Terminal UI** is also available (`mycelium no-gui` or `mycelium start`) with full keyboard-driven wallet, mining, and console views.
+
+![TUI](tui_screenshot_localhost.png)
+
+A **native Windows GUI** provides the same management features in a desktop window:
+
+![GUI](gui_screenshot_localhost.png)
 
 ## Docker
 

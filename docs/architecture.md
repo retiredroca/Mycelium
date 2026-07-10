@@ -1466,6 +1466,14 @@ The HTTP listener is a minimal synchronous TCP server running on the main thread
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Screenshots
+
+![Web Client](../webclient_screenshot_localhost.png)
+
+![Web Management Dashboard](../webmgmt_screenshot1_localhost.png)
+
+![Web Management - Profiles & Wallet](../webmgmt_screenshot2_localhost.png)
+
 ### Page Content
 
 The embedded landing page features:
